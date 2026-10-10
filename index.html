@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Post Planner</title>
+<script>
+  // Set the theme before first paint so there is no flash: saved choice, else the system setting.
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('pp_theme'); } catch (e) {}
+    if (t !== 'light' && t !== 'dark') t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="bg" aria-hidden="true"><i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i></div>
+
+<div id="login" class="overlay hidden">
+  <form class="glass login" id="loginForm">
+    <span class="logo" id="loginLogo"></span>
+    <div><h2>Post Planner</h2><p class="muted">Enter your password to continue.</p></div>
+    <label class="field" style="margin:0"><span>Password</span><input id="pw" type="password" autocomplete="current-password" required></label>
+    <p class="err" id="loginErr" role="alert"></p>
+    <button class="btn primary wide" type="submit">Sign in</button>
+  </form>
+</div>
+
+<div id="app" class="shell hidden">
+  <header class="bar glass">
+    <div class="brand"><span class="logo" id="brandLogo"></span><h1>Post Planner</h1></div>
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button class="tab" role="tab" data-act="view" data-v="planner" aria-selected="true">Planner</button>
+      <button class="tab" role="tab" data-act="view" data-v="calendar" aria-selected="false">Calendar</button>
+    </nav>
+    <div class="bar-right">
+      <button id="liPill" class="pill bad" data-act="connect" type="button"></button>
+      <button id="themeBtn" class="icon-btn" data-act="theme" type="button"></button>
+      <button id="logoutBtn" class="icon-btn" data-act="logout" type="button" aria-label="Sign out" title="Sign out"></button>
+    </div>
+  </header>
+  <div id="banner"></div>
+  <main id="view"></main>
+</div>
+
+<div id="busy" class="overlay hidden" role="status" aria-live="polite">
+  <div class="glass box"><div class="spinner"></div><p id="busyLabel">Working...</p></div>
+</div>
+<div id="modal" class="overlay hidden"></div>
+<div id="toasts" aria-live="polite"></div>
+
+<script src="lib.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
