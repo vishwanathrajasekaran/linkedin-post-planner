@@ -180,6 +180,7 @@ input:disabled, textarea:disabled { opacity: 0.7; cursor: not-allowed; }
 textarea { resize: vertical; min-height: 280px; line-height: 1.55; white-space: pre-wrap; }
 .grid2 { display: grid; grid-template-columns: 1fr 110px; gap: 12px; }
 .ed-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.ed-head-actions { display: flex; align-items: center; gap: 10px; }
 
 .toolbar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 5px; margin-bottom: 8px; border-radius: var(--r-sm);
@@ -301,7 +302,7 @@ textarea { resize: vertical; min-height: 280px; line-height: 1.55; white-space: 
 .cp.st-scheduled { background: var(--info-bg); color: var(--info); }
 .cp.st-ready { background: var(--warn-bg); color: var(--warn); }
 .cp.st-failed, .cp.st-late { background: var(--bad-bg); color: var(--bad); }
-.legend { display: flex; flex-wrap: wrap; gap: 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .day-list { display: grid; gap: 4px; margin: 10px 0 14px; }
 .day-list .row { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: flex-start; min-width: 0; }
 .day-list .row .day { min-width: 0; }

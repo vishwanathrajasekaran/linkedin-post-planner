@@ -309,7 +309,7 @@ function renderEditorPane() {
     ? `${url ? `<a class="btn" target="_blank" rel="noopener" href="${esc(url)}">View on LinkedIn</a>` : ''}<button class="btn" type="button" data-act="duplicate">Duplicate as draft</button><span class="spacer"></span><button class="btn danger" type="button" data-act="delete">Delete</button>`
     : `<button class="btn" type="button" data-act="save-draft">Save draft</button><button class="btn" type="button" data-act="save-ready">Mark ready</button><button class="btn primary" type="button" data-act="schedule">Schedule</button><button class="btn" type="button" data-act="publish">Publish now</button><span class="spacer"></span>${ed.id ? '<button class="btn danger" type="button" data-act="delete">Delete</button>' : ''}`;
   host.innerHTML = `
-    <div class="ed-head"><h2>${ed.id ? 'Edit post' : 'New post'}</h2>${ed.id ? `<span class="chip st-${stClass(ed)}">${esc(ed.status)}</span>` : ''}<button type="button" class="icon-btn" data-act="close-editor" aria-label="Close post editor" title="Close">${icon('close')}</button></div>
+    <div class="ed-head"><h2>${ed.id ? 'Edit post' : 'New post'}</h2><div class="ed-head-actions">${ed.id ? `<span class="chip st-${stClass(ed)}">${esc(ed.status)}</span>` : ''}<button type="button" class="icon-btn" data-act="close-editor" aria-label="Close post editor" title="Close">${icon('close')}</button></div></div>
     <div class="grid2">
       <label class="field"><span>Series</span><input id="f-series" list="series-dl" autocomplete="off" value="${esc(ed.series)}" ${dis}>
         <datalist id="series-dl">${names.map(s => `<option value="${esc(s)}">`).join('')}</datalist></label>
@@ -711,8 +711,8 @@ function renderCalendar() {
           : '<p class="muted">Nothing planned for this day.</p>'}</div>
         <button type="button" class="btn primary wide" data-act="cal-new" data-day="${state.calDay}">${icon('plus')} New post on this day</button>
         ${undated ? `<p class="hint">${undated} post${undated === 1 ? ' has' : 's have'} no date yet, so ${undated === 1 ? 'it is' : 'they are'} not on the calendar.</p>` : ''}
+        <div class="legend"><span class="chip st-scheduled">scheduled</span><span class="chip st-published">published</span><span class="chip st-ready">ready</span><span class="chip">draft</span><span class="chip st-late">late or failed</span></div>
       </aside>
-      <div class="legend"><span class="chip st-scheduled">scheduled</span><span class="chip st-published">published</span><span class="chip st-ready">ready</span><span class="chip">draft</span><span class="chip st-late">late or failed</span></div>
     </div></div>`;
 }
 function shiftMonth(dir) {
