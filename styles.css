@@ -302,7 +302,12 @@ textarea { resize: vertical; min-height: 280px; line-height: 1.55; white-space: 
 .cp.st-failed, .cp.st-late { background: var(--bad-bg); color: var(--bad); }
 .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .day-list { display: grid; gap: 4px; margin: 10px 0 14px; }
-.day-list .row { align-items: flex-start; }
+.day-list .row { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: flex-start; min-width: 0; }
+.day-list .row .day { min-width: 0; }
+.day-list .chip.st-published { background: var(--ok-bg); color: var(--ok); }
+.day-list .chip.st-scheduled { background: var(--info-bg); color: var(--info); }
+.day-list .chip.st-ready { background: var(--warn-bg); color: var(--warn); }
+.day-list .chip.st-failed, .day-list .chip.st-late { background: var(--bad-bg); color: var(--bad); }
 
 /* ---------- overlays ---------- */
 .overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(5, 12, 28, 0.35); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
