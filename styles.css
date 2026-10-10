@@ -211,7 +211,7 @@ textarea { resize: vertical; min-height: 280px; line-height: 1.55; white-space: 
 .stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .work { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 18px; align-items: start; }
 .today-date { color: var(--muted); font-size: 13px; margin: 2px 0 8px; }
-.row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin: 0 -10px; border-radius: 12px; cursor: pointer; width: calc(100% + 20px); background: none; border: 0; text-align: left; }
+.row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin: 0; border-radius: 12px; cursor: pointer; width: 100%; background: none; border: 0; text-align: left; }
 .row:hover, .row.sel { background: var(--field); }
 .row .day { min-width: 46px; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }
 .row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
