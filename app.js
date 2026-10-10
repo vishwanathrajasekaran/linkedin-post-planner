@@ -691,16 +691,18 @@ function renderCalendar() {
         <button type="button" class="btn primary" data-act="new-post">${icon('plus')} New post</button></div>
       <div class="cal-dow">${DOW.map(d => `<span>${d}</span>`).join('')}</div>
       <div class="cal-grid">${cells}</div>
-      <div class="legend"><span class="chip st-scheduled">scheduled</span><span class="chip st-published">published</span><span class="chip st-ready">ready</span><span class="chip">draft</span><span class="chip st-late">late or failed</span></div>
     </section>
-    <aside class="glass card">
-      <h2>${esc(dateLabel(selSt))}</h2>
-      <div class="day-list">${dayPosts.length
-        ? dayPosts.map(({ p, st }) => postRow(p, `<span class="chip st-${stClass(p)}">${esc(timeLabel(st))}</span>`)).join('')
-        : '<p class="muted">Nothing planned for this day.</p>'}</div>
-      <button type="button" class="btn primary wide" data-act="cal-new" data-day="${state.calDay}">${icon('plus')} New post on this day</button>
-      ${undated ? `<p class="hint">${undated} post${undated === 1 ? ' has' : 's have'} no date yet, so ${undated === 1 ? 'it is' : 'they are'} not on the calendar.</p>` : ''}
-    </aside></div>`;
+    <div class="cal-side">
+      <aside class="glass card">
+        <h2>${esc(dateLabel(selSt))}</h2>
+        <div class="day-list">${dayPosts.length
+          ? dayPosts.map(({ p, st }) => postRow(p, `<span class="chip st-${stClass(p)}">${esc(timeLabel(st))}</span>`)).join('')
+          : '<p class="muted">Nothing planned for this day.</p>'}</div>
+        <button type="button" class="btn primary wide" data-act="cal-new" data-day="${state.calDay}">${icon('plus')} New post on this day</button>
+        ${undated ? `<p class="hint">${undated} post${undated === 1 ? ' has' : 's have'} no date yet, so ${undated === 1 ? 'it is' : 'they are'} not on the calendar.</p>` : ''}
+      </aside>
+      <div class="legend"><span class="chip st-scheduled">scheduled</span><span class="chip st-published">published</span><span class="chip st-ready">ready</span><span class="chip">draft</span><span class="chip st-late">late or failed</span></div>
+    </div></div>`;
 }
 function shiftMonth(dir) {
   let { y, m } = state.cal; m += dir;

@@ -277,6 +277,7 @@ textarea { resize: vertical; min-height: 280px; line-height: 1.55; white-space: 
 
 /* ---------- calendar ---------- */
 .cal-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: start; }
+.cal-side { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
 .cal-top { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .cal-top h2 { font-size: 21px; min-width: 170px; }
 .cal-top .spacer { flex: 1; }
@@ -300,7 +301,7 @@ textarea { resize: vertical; min-height: 280px; line-height: 1.55; white-space: 
 .cp.st-scheduled { background: var(--info-bg); color: var(--info); }
 .cp.st-ready { background: var(--warn-bg); color: var(--warn); }
 .cp.st-failed, .cp.st-late { background: var(--bad-bg); color: var(--bad); }
-.legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; }
 .day-list { display: grid; gap: 4px; margin: 10px 0 14px; }
 .day-list .row { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: flex-start; min-width: 0; }
 .day-list .row .day { min-width: 0; }
