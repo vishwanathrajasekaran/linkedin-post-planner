@@ -8,6 +8,7 @@ const esc = escHtml;
 const ICONS = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  close: '<path d="M18 6L6 18M6 6l12 12"/>',
   cal: '<rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
@@ -308,7 +309,7 @@ function renderEditorPane() {
     ? `${url ? `<a class="btn" target="_blank" rel="noopener" href="${esc(url)}">View on LinkedIn</a>` : ''}<button class="btn" type="button" data-act="duplicate">Duplicate as draft</button><span class="spacer"></span><button class="btn danger" type="button" data-act="delete">Delete</button>`
     : `<button class="btn" type="button" data-act="save-draft">Save draft</button><button class="btn" type="button" data-act="save-ready">Mark ready</button><button class="btn primary" type="button" data-act="schedule">Schedule</button><button class="btn" type="button" data-act="publish">Publish now</button><span class="spacer"></span>${ed.id ? '<button class="btn danger" type="button" data-act="delete">Delete</button>' : ''}`;
   host.innerHTML = `
-    <div class="ed-head"><h2>${ed.id ? 'Edit post' : 'New post'}</h2>${ed.id ? `<span class="chip st-${stClass(ed)}">${esc(ed.status)}</span>` : ''}</div>
+    <div class="ed-head"><h2>${ed.id ? 'Edit post' : 'New post'}</h2>${ed.id ? `<span class="chip st-${stClass(ed)}">${esc(ed.status)}</span>` : ''}<button type="button" class="icon-btn" data-act="close-editor" aria-label="Close post editor" title="Close">${icon('close')}</button></div>
     <div class="grid2">
       <label class="field"><span>Series</span><input id="f-series" list="series-dl" autocomplete="off" value="${esc(ed.series)}" ${dis}>
         <datalist id="series-dl">${names.map(s => `<option value="${esc(s)}">`).join('')}</datalist></label>
@@ -593,6 +594,13 @@ function afterSave(post) {
   renderAll();
 }
 
+function closeEditor() {
+  state.ed = null; state.sel = null; state.dirty = false; state.expanded = false;
+  renderEditorPane();
+  renderSidebar();
+  updatePreview();
+}
+
 async function persist(status) {
   const ed = state.ed; if (!ed) return;
   if (status === 'draft' && !ed.title.trim() && !ed.body.trim()) { toast('Add a title or some text before saving.', { type: 'info' }); return; }
@@ -612,7 +620,10 @@ async function persist(status) {
     const d = await busy(status === 'scheduled' ? 'Scheduling...' : 'Saving...', () => api('save', { post: toPayload(ed, status) }));
     afterSave(d.post);
     const when = d.post.scheduledAt ? human(parseStamp(d.post.scheduledAt)) : '';
-    if (status === 'scheduled') toast(`Scheduled for ${when}. It goes out within 15 minutes of that time.`);
+    if (status === 'scheduled') {
+      toast(`Scheduled for ${when}. It goes out within 15 minutes of that time.`);
+      closeEditor();
+    }
     else if (status === 'ready') toast('Marked ready.');
     else toast('Draft saved.');
   } catch (e) { toast(e.message, { type: 'err' }); }
@@ -720,6 +731,7 @@ document.addEventListener('click', e => {
     case 'connect': connectLinkedIn(); break;
     case 'new-post': newPost(); break;
     case 'open-post': openPost(t.dataset.id); break;
+    case 'close-editor': closeEditor(); break;
     case 'duplicate': newPost({ from: state.ed }); break;
     case 'device':
       state.device = t.dataset.d;
@@ -740,6 +752,10 @@ document.addEventListener('click', e => {
   }
 });
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && state.view === 'planner' && state.ed && $('#modal').classList.contains('hidden') && !$('#picker .pop:not(.hidden)')) {
+    closeEditor();
+    return;
+  }
   const c = e.target.closest && e.target.closest('.cell');
   if (c && e.target === c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); c.click(); }
 });
