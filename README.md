@@ -165,6 +165,24 @@ Everything is in **IST** (Asia/Kolkata), whatever your browser's time zone. In t
 
 ---
 
+## Insights (impressions, reactions, comments, reposts)
+
+The **Insights** tab shows impressions, reactions, comments, reposts and an engagement rate for your published posts, with a chart and a sortable table. Numbers are stored in a **Stats** tab of the same Google Sheet, one row per snapshot, so you also keep the history.
+
+**Setup (2 minutes)**
+
+1. In Apps Script, add a second file (File +, Script) named `Insights` and paste `Insights.gs` into it.
+2. Paste the updated `Code.gs` over the old one. Only two lines changed: the `statsRoute_` hook inside `route_` and the optional `EXTRA_SCOPES` property in `authUrl_`.
+3. Deploy > Manage deployments > pencil icon > Version: New version > Deploy.
+4. Push the updated site files (`index.html`, `insights.js`, `insights.css`, `api/proxy.js`) to GitHub. Vercel redeploys on its own.
+
+**Two ways to fill it**
+
+- **By hand (works today).** Open a post on LinkedIn, copy the numbers, and click **Update** on its row in Insights.
+- **Automatically.** LinkedIn's Member Post Analytics API can return these numbers, but it needs the `r_member_postAnalytics` permission, which LinkedIn approves per app and does not grant by default. If it is approved for your app: set the script property `EXTRA_SCOPES` to `r_member_postAnalytics`, click the LinkedIn pill to reconnect, then click **Sync from LinkedIn**. To sync every night, run `enableStatsSync()` once from the Apps Script editor (re-run it if you ever re-run `setup()`, which clears all triggers). If LinkedIn requires a separate app for analytics, put that app's token in the script property `STATS_ACCESS_TOKEN` and the sync will use it.
+
+Sync re-reads a post at most every 6 hours and only for posts published in the last 60 days. If LinkedIn refuses, the page shows the reason and manual entry keeps working.
+
 ## Troubleshooting
 
 | What you see | Cause and fix |
@@ -197,15 +215,22 @@ The Apps Script and LinkedIn parts still run in Google's cloud, so you need step
 index.html        the page
 styles.css        Liquid Glass styling, day and night
 app.js            the app: planner, editor, calendar, picker, preview
+insights.js       the Insights tab (stats, chart, manual entry, sync)
+insights.css      styling for the Insights tab
 lib.js            IST time helpers, text styling, Drive link parsing (no dependencies)
 api/login.js      checks APP_PASSWORD and sets the login cookie
 api/logout.js     clears the cookie
 api/proxy.js      forwards requests to Apps Script and adds the API key
 api/_auth.js      cookie signing helpers
+Insights.gs       Apps Script file for stats (add it next to Code.gs)
 Code.gs           the Apps Script backend (paste it into Apps Script; it is not deployed to Vercel)
 vercel.json       function settings
 .env.example      the variables to set
 ```
+
+### The Stats sheet
+
+Columns: `postId`, `capturedAt`, `impressions`, `reach`, `reactions`, `comments`, `reshares`, `source` (`api` or `manual`). Created automatically on first use. Newest row per post wins.
 
 ### The Posts sheet
 
