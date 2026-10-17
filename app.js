@@ -22,6 +22,7 @@ function icon(name, size = 18) {
 
 const state = {
   posts: [],
+  topics: [],
   token: { connected: false, expiresAt: 0, name: '', picture: '' },
   view: 'planner',
   sel: null,        // id of the post open in the editor
@@ -31,6 +32,7 @@ const state = {
   expanded: false,  // "see more" in the preview
   cal: { y: 2026, m: 1 },
   calDay: '',
+  selected: new Set(),
 };
 let destroyPicker = null;
 
@@ -94,11 +96,15 @@ function confirmDialog({ title, message, ok = 'Confirm', cancel = 'Cancel', dang
 /* ---------- data helpers ---------- */
 function normalizePost(p) {
   const sc = parseStamp(p.scheduledAt), pu = parseStamp(p.publishedAt);
+  let media = p.media;
+  if (typeof media === 'string') { try { media = JSON.parse(media); } catch (e) { media = []; } }
+  if (!Array.isArray(media) || !media.length) media = p.imageDriveId ? [{ driveId: p.imageDriveId, type: 'image', altText: p.title || '' }] : [];
   return {
     ...p,
     day: p.day === '' || p.day == null ? '' : Number(p.day),
     series: p.series ?? '', title: p.title ?? '', body: p.body ?? '', error: p.error ?? '',
     imageDriveId: p.imageDriveId ?? '', linkedinUrn: p.linkedinUrn ?? '',
+    media,
     scheduledAt: sc ? fmtStamp(sc) : '', publishedAt: pu ? fmtStamp(pu) : '',
   };
 }
@@ -112,7 +118,7 @@ const stClass = p => (isLate(p) ? (p.status === 'failed' ? 'failed' : 'late') : 
 const bySeriesDay = (a, b) => String(a.series).localeCompare(String(b.series)) || (a.day || 0) - (b.day || 0);
 const liUrl = urn => (/^urn:li:[A-Za-z]+:\d+$/.test(urn || '') ? `https://www.linkedin.com/feed/update/${urn}/` : '');
 function blankPost(over = {}) {
-  return { id: '', series: '', day: '', title: '', body: '', imageDriveId: '', status: 'draft', scheduledAt: '', publishedAt: '', linkedinUrn: '', error: '', ...over };
+  return { id: '', series: '', day: '', title: '', body: '', imageDriveId: '', media: [], status: 'draft', scheduledAt: '', publishedAt: '', linkedinUrn: '', error: '', ...over };
 }
 function postStamp(p) {
   return parseStamp(p.status === 'published' ? (p.publishedAt || p.scheduledAt) : p.scheduledAt);
@@ -147,9 +153,10 @@ async function logout() {
 
 /* ---------- loading ---------- */
 async function loadAll() {
-  const d = await api('list');
+  const [d, topics] = await Promise.all([api('list'), api('topicList')]);
   state.token = d.token || state.token;
   state.posts = (d.posts || []).map(normalizePost);
+  state.topics = topics.topics || [];
 }
 async function refresh() {
   try {
@@ -236,7 +243,12 @@ function renderPlanner() {
     <aside class="side">
       <section class="glass card" id="today"></section>
       <button class="btn primary wide" type="button" data-act="new-post">${icon('plus')} New post</button>
-      <div id="seriesList" class="stack"></div>
+      <section class="glass card bulk-tools"><div class="ed-head"><h2>Bulk tools</h2><span id="selCount" class="muted">0 selected</span></div>
+        <div class="actions"><button class="btn" type="button" data-act="import">Import</button><button class="btn" type="button" data-act="export-json">Export JSON</button><button class="btn" type="button" data-act="export-csv">Export CSV</button></div>
+        <div class="actions"><button class="btn" type="button" data-act="bulk-ready">Mark ready</button><button class="btn" type="button" data-act="bulk-delete">Delete selected</button></div>
+        <input id="importFile" class="hidden" type="file" accept=".json,.csv,application/json,text/csv"></section>
+       <div id="seriesList" class="stack"></div>
+       <section class="glass card" id="topicLibrary"></section>
     </aside>
     <section class="work">
       <div class="glass card" id="editor"></div>
@@ -247,7 +259,18 @@ function renderPlanner() {
   renderEditorPane();
   renderPreviewShell();
 }
-function renderSidebar() { renderToday(); renderSeries(); }
+function renderSidebar() { renderToday(); renderSeries(); renderTopicLibrary(); }
+function renderTopicLibrary() {
+  const host = $('#topicLibrary'); if (!host) return;
+  const topics = state.topics.filter(t => t.type === 'topic');
+  const hashtags = state.topics.filter(t => t.type === 'hashtag');
+  const item = t => `<li><button class="library-insert" type="button" data-act="insert-topic" data-value="${esc(t.value)}">${esc(t.value)}</button><button class="library-delete" type="button" data-act="delete-topic" data-id="${esc(t.id)}" aria-label="Delete ${esc(t.value)}">×</button></li>`;
+  host.innerHTML = `<div class="library-head"><h2>Topic library</h2><span class="muted">${state.topics.length}</span></div>
+    <form class="library-form" data-act="save-topic"><select id="topic-type" aria-label="Library item type"><option value="topic">Topic</option><option value="hashtag">Hashtag</option></select><input id="topic-value" placeholder="e.g. productivity or #buildinpublic" maxlength="80" required><button class="btn" type="submit">Save</button></form>
+    ${topics.length ? `<p class="sub">Topics</p><ul class="library-list">${topics.map(item).join('')}</ul>` : ''}
+    ${hashtags.length ? `<p class="sub">Hashtags</p><ul class="library-list">${hashtags.map(item).join('')}</ul>` : ''}
+    ${!state.topics.length ? '<p class="muted library-empty">Save topics and hashtags to reuse them in posts.</p>' : '<p class="hint">Click an item to insert it at the cursor.</p>'}`;
+}
 function renderToday() {
   const host = $('#today'); if (!host) return;
   const n = nowIST(), key = dayKey(n);
@@ -273,8 +296,9 @@ function renderSeries() {
     const done = list.filter(p => p.status === 'published').length;
     return `<section class="glass card"><h2>${esc(name)}</h2><div class="bar-track" role="img" aria-label="${done} of ${list.length} published"><i style="width:${(done / list.length) * 100}%"></i></div>
       <p class="muted" style="font-size:13px;margin-bottom:6px">${done} of ${list.length} published</p>
-      ${list.map(p => postRow(p, `<span class="chip st-${stClass(p)}">${esc(isLate(p) && p.status !== 'failed' ? 'late' : p.status)}</span>`)).join('')}</section>`;
+      ${list.map(p => postRow(p, `<input class="bulk-check" type="checkbox" data-id="${esc(p.id)}" ${state.selected?.has(p.id) ? 'checked' : ''} aria-label="Select ${esc(p.title || 'Untitled')}"><span class="chip st-${stClass(p)}">${esc(isLate(p) && p.status !== 'failed' ? 'late' : p.status)}</span>`)).join('')}</section>`;
   }).join('');
+  const count = $('#selCount'); if (count) count.textContent = `${state.selected?.size || 0} selected`;
 }
 
 /* ---------- planner: editor ---------- */
@@ -333,18 +357,18 @@ function renderEditorPane() {
         <button type="button" data-fmt="clear" title="Clear formatting" aria-label="Clear formatting">Clear</button>
       </div>`}
       <textarea id="f-body" aria-labelledby="lbl-body" ${dis}>${esc(ed.body)}</textarea>
-      ${locked ? '' : '<p class="hint">Select text, then pick a style. LinkedIn has no rich text, so styles are special Unicode characters. They look right everywhere but screen readers may read them oddly, so use them sparingly.</p>'}
+     ${locked ? '' : '<p class="hint">Select text, then pick a style. LinkedIn has no rich text, so styles are special Unicode characters. They look right everywhere but screen readers may read them oddly, so use them sparingly.</p>'}
     </div>
-    <label class="field"><span>Image <em>(Google Drive link)</em></span>
-      <input id="f-img" autocomplete="off" placeholder="https://drive.google.com/file/d/.../view" value="${esc(driveLink(ed.imageDriveId))}" ${dis}>
-      <p class="hint" id="img-hint"></p></label>
+    ${locked ? '' : `<section class="assistant" aria-labelledby="assistant-title"><div class="assistant-head"><div><h3 id="assistant-title">Writing assistant</h3><p class="hint">Use your configured AI provider to draft or refine copy.</p></div><select id="ai-operation" aria-label="Writing assistant action"><option value="generate">Generate</option><option value="rewrite">Rewrite</option><option value="shorten">Shorten</option><option value="expand">Expand</option><option value="hook">Suggest hooks</option></select></div><input id="ai-instruction" placeholder="Optional direction, e.g. sound more practical" maxlength="300"><button class="btn primary" type="button" data-act="ai-assist">Run assistant</button><div id="ai-output" class="assistant-output hidden"></div></section>`}
+     <div class="field"><div class="field-head"><span>Attachments <em>(Google Drive)</em></span>${locked ? '' : '<button class="btn" type="button" data-act="add-media">Add attachment</button>'}</div>
+       <div id="media-list">${(ed.media || []).map((m, i) => `<div class="media-row"><select data-media="type" data-i="${i}" ${dis}><option value="image" ${m.type === 'image' ? 'selected' : ''}>Image</option><option value="document" ${m.type === 'document' ? 'selected' : ''}>PDF document</option><option value="video" ${m.type === 'video' ? 'selected' : ''}>Video (unsupported)</option></select><input data-media="driveId" data-i="${i}" placeholder="Google Drive share link" value="${esc(driveLink(m.driveId))}" ${dis}><input data-media="altText" data-i="${i}" placeholder="Alt text" value="${esc(m.altText || '')}" ${dis}>${locked ? '' : '<button class="icon-btn" type="button" data-act="remove-media" data-i="' + i + '" aria-label="Remove attachment">×</button>'}</div>`).join('')}</div>
+       <p class="hint">Images and PDF documents can be published. Video is stored for planning but publishing shows a clear unsupported-media error.</p></div>
     <div class="field"><span>Publish at <em>(IST)</em></span><div class="picker" id="picker"></div></div>
     ${ed.error ? `<div class="alert err" role="alert">${esc(ed.error)}</div>` : ''}
     ${locked ? `<div class="alert note">This post is published, so it is read-only.${ed.publishedAt ? ' Published ' + esc(human(parseStamp(ed.publishedAt))) + '.' : ''}</div>` : ''}
     <div class="actions">${actions}</div>`;
   bindEditor(locked);
   updateCount();
-  imgHint(ed);
 }
 
 function bindEditor(locked) {
@@ -365,10 +389,11 @@ function bindEditor(locked) {
     b.addEventListener('mousedown', e => e.preventDefault()); // keep the text selection
     b.addEventListener('click', () => applyFormat(b.dataset.fmt));
   });
-  $('#f-img').addEventListener('input', e => {
-    touch('imageDriveId', driveId(e.target.value));
-    imgHint(ed); updatePreview();
-  });
+  $$('#media-list [data-media]').forEach(input => input.addEventListener('input', e => {
+    const i = Number(e.target.dataset.i), key = e.target.dataset.media;
+    ed.media ||= []; ed.media[i] ||= { driveId: '', type: 'image', altText: '' };
+    ed.media[i][key] = key === 'driveId' ? driveId(e.target.value) : e.target.value; ed.imageDriveId = ed.media[0]?.driveId || ''; touch('media', ed.media); updatePreview();
+  }));
   destroyPicker = mountPicker($('#picker'), ed.scheduledAt, v => touch('scheduledAt', v), locked);
 }
 
@@ -437,9 +462,8 @@ function updatePreview() {
   const more = body.trim() && cut.more
     ? (state.expanded ? ' <button type="button" class="li-more" data-act="expand">see less</button>' : '… <button type="button" class="li-more" data-act="expand">see more</button>')
     : '';
-  const img = ed.imageDriveId
-    ? `<div class="li-img"><img src="https://drive.google.com/thumbnail?id=${encodeURIComponent(ed.imageDriveId)}&sz=w1000" alt="Image attached to the post" referrerpolicy="no-referrer"></div>`
-    : '';
+  const media = ed.media || (ed.imageDriveId ? [{ driveId: ed.imageDriveId, type: 'image', altText: '' }] : []);
+  const img = media.length ? `<div class="li-media">${media.map(m => m.type === 'image' ? `<div class="li-img"><img src="https://drive.google.com/thumbnail?id=${encodeURIComponent(m.driveId)}&sz=w1000" alt="${esc(m.altText || 'Image attached to the post')}" referrerpolicy="no-referrer"></div>` : `<div class="li-doc">📄 ${esc(m.type === 'video' ? 'Video (unsupported for publishing)' : 'PDF document attached')}</div>`).join('')}</div>` : '';
   host.innerHTML = `<article class="li-card">
     <div class="li-head"><span class="av">${esc(initials)}${t.picture ? `<img src="${esc(t.picture)}" alt="" referrerpolicy="no-referrer">` : ''}</span>
       <div class="li-who"><b>${esc(name)}</b><span>Just now 🌐</span></div></div>
@@ -558,7 +582,7 @@ async function newPost(opts = {}) {
   const inSeries = state.posts.filter(p => p.series === series).map(p => p.day || 0);
   const day = series || inSeries.length ? Math.max(0, ...inSeries) + 1 : (last ? '' : 1);
   const ed = blankPost({ series, day });
-  if (opts.from) { ed.title = opts.from.title; ed.body = opts.from.body; ed.imageDriveId = opts.from.imageDriveId; }
+  if (opts.from) { ed.title = opts.from.title; ed.body = opts.from.body; ed.imageDriveId = opts.from.imageDriveId; ed.media = (opts.from.media || []).map(m => ({ ...m })); }
   if (opts.date) {
     const n = nowIST();
     if (opts.date >= dayKey(n)) {
@@ -573,8 +597,8 @@ async function newPost(opts = {}) {
 
 function toPayload(ed, status) {
   const p = {
-    series: ed.series.trim(), day: ed.day === '' ? '' : Number(ed.day), title: ed.title.trim(), body: ed.body,
-    imageDriveId: ed.imageDriveId, status, scheduledAt: ed.scheduledAt || '', error: '',
+    series: String(ed.series || '').trim(), day: ed.day === '' ? '' : Number(ed.day), title: String(ed.title || '').trim(), body: String(ed.body || ''),
+    imageDriveId: ed.imageDriveId, media: (ed.media || []).filter(m => m.driveId).map(m => ({ driveId: m.driveId, type: m.type, altText: m.altText || '' })), status, scheduledAt: ed.scheduledAt || '', error: '',
   };
   if (ed.id) p.id = ed.id;
   return p;
@@ -669,6 +693,31 @@ async function deletePost() {
   } catch (e) { toast(e.message, { type: 'err' }); }
 }
 
+function selectedPosts() { return state.posts.filter(p => state.selected.has(p.id)); }
+async function bulkStatus(status) {
+  const posts = selectedPosts(); if (!posts.length) { toast('Select one or more posts first.', { type: 'info' }); return; }
+  try { const d = await busy('Updating selected posts...', () => api('bulk', { operation: 'status', status, ids: posts.map(p => p.id) })); state.selected.clear(); await refresh(); toast(`${d.count} post${d.count === 1 ? '' : 's'} updated.`); } catch (e) { toast(e.message, { type: 'err' }); }
+}
+async function bulkDelete() {
+  const posts = selectedPosts(); if (!posts.length) { toast('Select one or more posts first.', { type: 'info' }); return; }
+  if (!(await confirmDialog({ title: 'Delete selected posts?', message: `This removes ${posts.length} post${posts.length === 1 ? '' : 's'} from the planner.`, ok: 'Delete', danger: true }))) return;
+  try { const d = await busy('Deleting selected posts...', () => api('bulk', { operation: 'delete', ids: posts.map(p => p.id) })); state.selected.clear(); await refresh(); toast(`${d.count} post${d.count === 1 ? '' : 's'} deleted.`, { type: 'info' }); } catch (e) { toast(e.message, { type: 'err' }); }
+}
+function download(name, content, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([content], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
+function exportPosts(format) {
+  const rows = state.posts.map(p => ({ series: p.series, day: p.day, title: p.title, body: p.body, media: p.media || [], status: p.status, scheduledAt: p.scheduledAt }));
+  if (format === 'json') download('post-planner.json', JSON.stringify(rows, null, 2), 'application/json');
+  else { const cols = ['series','day','title','body','media','status','scheduledAt']; const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"'; download('post-planner.csv', [cols.join(','), ...rows.map(r => cols.map(c => q(c === 'media' ? JSON.stringify(r[c]) : r[c])).join(','))].join('\n'), 'text/csv'); }
+}
+function parseImport(text, name) {
+  let rows;
+  if (name.toLowerCase().endsWith('.json')) { try { rows = JSON.parse(text); } catch (e) { throw new Error('Import JSON is invalid.'); } if (!Array.isArray(rows)) throw new Error('JSON import must be an array of posts.'); }
+  else { const lines = text.split(/\r?\n/).filter(Boolean), cols = lines.shift().split(',').map(x => x.replace(/^"|"$/g, '')); rows = lines.map(line => { const vals = []; let cur = '', quoted = false; for (const ch of line) { if (ch === '"') quoted = !quoted; else if (ch === ',' && !quoted) { vals.push(cur); cur = ''; } else cur += ch; } vals.push(cur); return Object.fromEntries(cols.map((c, i) => [c, vals[i] || ''])); }); }
+  if (rows.length > 500) throw new Error('Import is limited to 500 posts at a time.');
+  return rows.map((r, i) => { if (!r || typeof r !== 'object' || !String(r.body || '').trim()) throw new Error(`Row ${i + 1} needs post text (body).`); const media = Array.isArray(r.media) ? r.media : (r.media ? JSON.parse(r.media) : []); if (!Array.isArray(media)) throw new Error(`Row ${i + 1} has invalid media; use an array.`); return toPayload({ ...blankPost(), ...r, media }, r.status || 'draft'); });
+}
+async function importPosts(file) { try { const rows = parseImport(await file.text(), file.name); for (const post of rows) await api('save', { post }); await loadAll(); renderAll(); toast(`Imported ${rows.length} post${rows.length === 1 ? '' : 's'}.`); } catch (e) { toast(e.message || 'Import failed.', { type: 'err', ms: 9000 }); } }
+
 /* ---------- calendar ---------- */
 function renderCalendar() {
   const { y, m } = state.cal;
@@ -723,6 +772,8 @@ function shiftMonth(dir) {
 
 /* ---------- events ---------- */
 document.addEventListener('click', e => {
+  const check = e.target.closest('.bulk-check');
+  if (check) { e.stopPropagation(); if (check.checked) state.selected.add(check.dataset.id); else state.selected.delete(check.dataset.id); const c = $('#selCount'); if (c) c.textContent = `${state.selected.size} selected`; return; }
   const t = e.target.closest('[data-act]'); if (!t) return;
   switch (t.dataset.act) {
     case 'view': setView(t.dataset.v); break;
@@ -743,6 +794,13 @@ document.addEventListener('click', e => {
     case 'schedule': persist('scheduled'); break;
     case 'publish': publishNow(); break;
     case 'delete': deletePost(); break;
+    case 'add-media': if (state.ed) { state.ed.media ||= []; state.ed.media.push({ driveId: '', type: 'image', altText: '' }); state.dirty = true; renderEditorPane(); updatePreview(); } break;
+    case 'remove-media': if (state.ed) { state.ed.media.splice(Number(t.dataset.i), 1); state.ed.imageDriveId = state.ed.media[0]?.driveId || ''; state.dirty = true; renderEditorPane(); updatePreview(); } break;
+    case 'bulk-ready': bulkStatus('ready'); break;
+    case 'bulk-delete': bulkDelete(); break;
+    case 'export-json': exportPosts('json'); break;
+    case 'export-csv': exportPosts('csv'); break;
+    case 'import': $('#importFile')?.click(); break;
     case 'cal-prev': shiftMonth(-1); break;
     case 'cal-next': shiftMonth(1); break;
     case 'cal-today': { const n = nowIST(); state.cal = { y: n.y, m: n.m }; state.calDay = dayKey(n); renderCalendar(); break; }
@@ -751,6 +809,7 @@ document.addEventListener('click', e => {
     default: break;
   }
 });
+document.addEventListener('change', e => { if (e.target.id === 'importFile' && e.target.files[0]) { importPosts(e.target.files[0]); e.target.value = ''; } });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && state.view === 'planner' && state.ed && $('#modal').classList.contains('hidden') && !$('#picker .pop:not(.hidden)')) {
     closeEditor();

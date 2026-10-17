@@ -5,7 +5,7 @@
  * All dates in the sheet and in the app are IST (Asia/Kolkata), stored as "yyyy-MM-dd HH:mm".
  * Setup and update steps are at the bottom of this file.
  */
-const COLS = ['id','series','day','title','body','imageDriveId','status','scheduledAt','publishedAt','linkedinUrn','error'];
+const COLS = ['id','series','day','title','body','imageDriveId','media','status','scheduledAt','publishedAt','linkedinUrn','error'];
 const LI_VERSION = '202608';
 const TZ = 'Asia/Kolkata';
 const STAMP = 'yyyy-MM-dd HH:mm';
@@ -17,8 +17,8 @@ function setup() {
   const ss = SpreadsheetApp.getActive();
   P.setProperty('SHEET_ID', ss.getId());
   let sh = ss.getSheetByName('Posts') || ss.insertSheet('Posts');
-  if (sh.getLastRow() === 0) sh.appendRow(COLS);
-  sh.getRange('H:I').setNumberFormat('@'); // keep date stamps as text
+  ensureColumns_(sh);
+  sh.getRange('I:J').setNumberFormat('@'); // keep date stamps as text
   ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('publishDue').timeBased().everyMinutes(15).create();
 }
@@ -36,11 +36,25 @@ function stamp_(d) { return Utilities.formatDate(d, TZ, STAMP); }
 
 /* ---------- sheet helpers ---------- */
 function sheet_() { return SpreadsheetApp.openById(P.getProperty('SHEET_ID')).getSheetByName('Posts'); }
+function ensureColumns_(sh) {
+  if (sh.getLastRow() === 0) { sh.appendRow(COLS); return; }
+  const header = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), 1)).getValues()[0].map(String);
+  if (header.indexOf('media') < 0) { sh.insertColumnBefore(7); sh.getRange(1, 7).setValue('media'); }
+  COLS.forEach(c => { if (sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String).indexOf(c) < 0) sh.getRange(1, sh.getLastColumn() + 1).setValue(c); });
+}
 function cell_(v) { return v instanceof Date ? stamp_(v) : v; }
 function rowToObj_(r) { const o = {}; COLS.forEach((c, i) => o[c] = cell_(r[i])); return o; }
 function readAll_() {
-  const v = sheet_().getDataRange().getValues(); v.shift();
+  const sh = sheet_(); ensureColumns_(sh); const v = sh.getDataRange().getValues(); v.shift();
+  v.forEach(r => { if (r[6]) { try { r[6] = JSON.parse(r[6]); } catch (e) { r[6] = []; } } });
   return v.filter(r => r[0]).map(rowToObj_);
+}
+function media_(p) {
+  let items = p.media;
+  if (typeof items === 'string') { try { items = JSON.parse(items); } catch (e) { items = []; } }
+  if (!Array.isArray(items)) items = [];
+  if (!items.length && p.imageDriveId) items = [{ driveId: p.imageDriveId, type: 'image', altText: p.title || '' }];
+  return items.map(x => ({ driveId: driveId_(x.driveId || x.id || ''), type: String(x.type || 'image').toLowerCase(), altText: String(x.altText || '') })).filter(x => x.driveId);
 }
 function driveId_(s) {
   s = String(s || '').trim();
@@ -55,8 +69,10 @@ function validateForPublish_(p) {
 }
 function save_(input) {
   const sh = sheet_();
+  ensureColumns_(sh);
   const p = Object.assign({}, input);
   if (p.imageDriveId !== undefined) p.imageDriveId = driveId_(p.imageDriveId);
+  if (p.media !== undefined) p.media = JSON.stringify(media_(p));
   if (p.scheduledAt !== undefined) { const d = toDate_(p.scheduledAt); p.scheduledAt = d ? stamp_(d) : ''; }
   const vals = sh.getDataRange().getValues();
   let idx = -1;
@@ -68,9 +84,10 @@ function save_(input) {
     if (!merged.scheduledAt) throw new Error('Pick a publish date and time first.');
     validateForPublish_(merged);
   }
-  const row = COLS.map(c => (merged[c] === undefined || merged[c] === null) ? '' : merged[c]);
+  const row = COLS.map(c => c === 'media' ? JSON.stringify(media_(merged)) : ((merged[c] === undefined || merged[c] === null) ? '' : merged[c]));
   if (idx > 0) sh.getRange(idx + 1, 1, 1, COLS.length).setValues([row]);
   else sh.appendRow(row);
+  merged.media = media_(merged);
   return merged;
 }
 function delete_(id) {
@@ -116,12 +133,21 @@ function route_(action, b) {
     if (action === 'list') return { posts: readAll_(), token: tokenInfo_() };
     if (action === 'save') return { post: save_(b.post) };
     if (action === 'delete') { delete_(b.id); return { ok: true }; }
+    if (action === 'bulk') return withLock_(() => bulk_(b.operation, b.ids || [], b.status));
     if (action === 'publishNow') return withLock_(() => ({ post: publish_(readAll_().find(x => x.id === b.id)) }));
     if (action === 'authUrl') return { url: authUrl_() };
     const s = statsRoute_(action, b); // Insights.gs
     if (s) return s;
     return { error: 'Unknown action' };
   } catch (err) { return { error: String(err.message || err) }; }
+}
+function bulk_(operation, ids, status) {
+  const posts = readAll_(), found = ids.map(id => posts.find(p => p.id === id)).filter(Boolean);
+  if (!found.length) throw new Error('Select at least one existing post.');
+  if (operation === 'delete') { found.forEach(p => delete_(p.id)); return { ok: true, count: found.length }; }
+  if (operation === 'status') { found.forEach(p => save_({ id: p.id, status: status || 'ready' })); return { ok: true, count: found.length }; }
+  if (operation === 'publish') return { posts: found.map(p => publish_(p)) };
+  throw new Error('Unknown bulk operation.');
 }
 
 /* ---------- LinkedIn OAuth (personal profile, w_member_social) ---------- */
@@ -188,19 +214,41 @@ function uploadImage_(fileId) {
   if (up.getResponseCode() >= 300) throw new Error('LinkedIn rejected the image (' + up.getResponseCode() + '). Use a JPG, PNG or GIF under 5 MB.');
   return init.image;
 }
+function uploadDocument_(fileId) {
+  const owner = P.getProperty('PERSON_URN');
+  const ir = UrlFetchApp.fetch('https://api.linkedin.com/rest/documents?action=initializeUpload', {
+    method: 'post', contentType: 'application/json', headers: liHeaders_(), muteHttpExceptions: true,
+    payload: JSON.stringify({ initializeUploadRequest: { owner } })
+  });
+  if (ir.getResponseCode() !== 200) throw new Error('LinkedIn document setup failed: ' + ir.getContentText().slice(0, 200));
+  const init = JSON.parse(ir.getContentText()).value;
+  let blob; try { blob = DriveApp.getFileById(fileId).getBlob(); } catch (e) { throw new Error('Could not read the document from Google Drive. Check the link and permissions.'); }
+  const up = UrlFetchApp.fetch(init.uploadUrl, { method: 'put', headers: { Authorization: 'Bearer ' + P.getProperty('ACCESS_TOKEN') }, payload: blob.getBytes(), contentType: blob.getContentType(), muteHttpExceptions: true });
+  if (up.getResponseCode() >= 300) throw new Error('LinkedIn rejected the document (' + up.getResponseCode() + '). Use a PDF under 100 MB.');
+  return init.document;
+}
 
 function publish_(post) {
   if (!post) throw new Error('Post not found.');
   if (post.status === 'published') throw new Error('This post is already published.');
   if (!tokenInfo_().connected) throw new Error('LinkedIn sign-in expired. Reconnect LinkedIn first.');
   validateForPublish_(post);
+  const media = media_(post);
+  media.forEach(m => { if (!['image', 'document'].includes(m.type)) throw new Error('Video media is not supported by this LinkedIn integration. Remove the video or use an image or PDF document.'); });
+  if (media.length > 9) throw new Error('A post can have at most 9 attachments.');
   try {
     const body = {
       author: P.getProperty('PERSON_URN'), commentary: escapeText_(post.body),
       visibility: 'PUBLIC', lifecycleState: 'PUBLISHED', isReshareDisabledByAuthor: false,
       distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] }
     };
-    if (post.imageDriveId) body.content = { media: { id: uploadImage_(post.imageDriveId), altText: post.title || '' } };
+    if (media.length) {
+      if (media.length === 1) body.content = { media: { id: media[0].type === 'document' ? uploadDocument_(media[0].driveId) : uploadImage_(media[0].driveId), altText: media[0].altText || post.title || '' } };
+      else {
+        if (media.some(m => m.type !== 'image')) throw new Error('Multiple attachments must all be images; LinkedIn supports one document per post.');
+        body.content = { multiImage: { images: media.map(m => ({ id: uploadImage_(m.driveId), altText: m.altText || post.title || '' })) } };
+      }
+    }
     const r = UrlFetchApp.fetch('https://api.linkedin.com/rest/posts', {
       method: 'post', contentType: 'application/json', headers: liHeaders_(), payload: JSON.stringify(body), muteHttpExceptions: true
     });
