@@ -4,6 +4,7 @@ A small, self-hosted tool for planning, scheduling and publishing LinkedIn posts
 
 - **Planner:** write posts, group them into series, see today's posts and anything late or failed.
 - **Editor:** bold, italic, underline, strikethrough, monospace, bullets, numbering and indent, with a LinkedIn-style preview (desktop and mobile).
+- **Writing assistant:** generate, rewrite, shorten, expand a post, or suggest hooks through a server-configured OpenAI-compatible provider.
 - **Calendar:** a month view of everything scheduled and published.
 - **Scheduling:** pick a date and time (IST) and the post goes out automatically, within about 15 minutes.
 - **Media:** attach multiple Google Drive files with a type and alt text. Images and PDF documents publish through LinkedIn; video is retained for planning but clearly rejected when publishing.
@@ -117,6 +118,9 @@ To test the backend, open the `/exec` URL in a browser. You should see a plain "
    | `API_KEY` | The same value as the `API_KEY` script property |
    | `APP_PASSWORD` | The password you will type to open the site |
    | `SESSION_SECRET` | A long random string for signing the login cookie (`openssl rand -hex 32`) |
+   | `AI_BASE_URL` | Optional OpenAI-compatible API base URL, for example `https://api.openai.com/v1` |
+   | `AI_API_KEY` | Optional provider key (server-side only; never commit it) |
+   | `AI_MODEL` | Optional chat model name used by the writing assistant |
 
 4. Click **Deploy**.
 5. Environment variables only apply to **new** deployments. If you add or change one later, redeploy from the Deployments page.
@@ -139,6 +143,8 @@ To test the backend, open the `/exec` URL in a browser. You should see a plain "
 - A published post becomes read-only. You can **Duplicate as draft** or open it on LinkedIn.
 - **Delete** removes a post from the planner only. A post already on LinkedIn stays there.
 - The **Calendar** tab shows the month. Click a day to see its posts or to start one on that day.
+- In the Planner sidebar, expand or collapse each series to reduce scrolling. Select individual posts or use **Select all posts**, then apply **Draft**, **Ready**, **Scheduled**, **Publish**, or **Delete**. Scheduling selected posts uses the shared IST date/time field.
+- The **Writing assistant** is in the editor. Choose an action, optionally add direction, and apply the returned text. If the AI variables are missing, the assistant reports a clear configuration error.
 
 ### Text formatting
 
