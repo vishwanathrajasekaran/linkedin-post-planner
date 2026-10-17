@@ -6,7 +6,6 @@
  * Setup and update steps are at the bottom of this file.
  */
 const COLS = ['id','series','day','title','body','imageDriveId','media','status','scheduledAt','publishedAt','linkedinUrn','error'];
-const TOPIC_COLS = ['id','type','value','createdAt'];
 const LI_VERSION = '202608';
 const TZ = 'Asia/Kolkata';
 const STAMP = 'yyyy-MM-dd HH:mm';
@@ -19,8 +18,6 @@ function setup() {
   P.setProperty('SHEET_ID', ss.getId());
   let sh = ss.getSheetByName('Posts') || ss.insertSheet('Posts');
   ensureColumns_(sh);
-  const topics = ss.getSheetByName('Topics') || ss.insertSheet('Topics');
-  if (topics.getLastRow() === 0) topics.appendRow(TOPIC_COLS);
   sh.getRange('I:J').setNumberFormat('@'); // keep date stamps as text
   ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('publishDue').timeBased().everyMinutes(15).create();
@@ -99,31 +96,6 @@ function delete_(id) {
   const idx = vals.findIndex((r, i) => i > 0 && r[0] === id);
   if (idx > 0) sh.deleteRow(idx + 1);
 }
-function topicsSheet_() {
-  const ss = SpreadsheetApp.openById(P.getProperty('SHEET_ID'));
-  const sh = ss.getSheetByName('Topics') || ss.insertSheet('Topics');
-  if (sh.getLastRow() === 0) sh.appendRow(TOPIC_COLS);
-  return sh;
-}
-function readTopics_() {
-  const sh = topicsSheet_(); if (!sh || sh.getLastRow() < 2) return [];
-  const v = sh.getDataRange().getValues(); v.shift();
-  return v.filter(r => r[0]).map(r => ({ id: String(r[0]), type: String(r[1] || 'topic'), value: String(r[2] || ''), createdAt: cell_(r[3]) }));
-}
-function saveTopic_(input) {
-  const type = input && input.type === 'hashtag' ? 'hashtag' : 'topic';
-  const value = String(input && input.value || '').trim();
-  if (!value) throw new Error('Enter a topic or hashtag first.');
-  const existing = readTopics_().find(t => t.type === type && t.value.toLowerCase() === value.toLowerCase());
-  if (existing) return existing;
-  const item = { id: Utilities.getUuid().slice(0, 8), type, value, createdAt: stamp_(new Date()) };
-  topicsSheet_().appendRow(TOPIC_COLS.map(c => item[c] || '')); return item;
-}
-function deleteTopic_(id) {
-  const sh = topicsSheet_(); const vals = sh.getDataRange().getValues();
-  const idx = vals.findIndex((r, i) => i > 0 && String(r[0]) === String(id)); if (idx > 0) sh.deleteRow(idx + 1);
-}
-
 /* ---------- web app ---------- */
 function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 function h_(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -160,23 +132,31 @@ function route_(action, b) {
     if (action === 'list') return { posts: readAll_(), token: tokenInfo_() };
     if (action === 'save') return { post: save_(b.post) };
     if (action === 'delete') { delete_(b.id); return { ok: true }; }
-    if (action === 'bulk') return withLock_(() => bulk_(b.operation, b.ids || [], b.status));
+    if (action === 'bulk') return withLock_(() => bulk_(b.operation, b.ids || [], b.status, b.scheduledAt));
     if (action === 'publishNow') return withLock_(() => ({ post: publish_(readAll_().find(x => x.id === b.id)) }));
     if (action === 'authUrl') return { url: authUrl_() };
-    if (action === 'topicList') return { topics: readTopics_() };
-    if (action === 'topicSave') { saveTopic_(b.topic); return { topics: readTopics_() }; }
-    if (action === 'topicDelete') { deleteTopic_(b.id); return { topics: readTopics_() }; }
     const s = statsRoute_(action, b); // Insights.gs
     if (s) return s;
     return { error: 'Unknown action' };
   } catch (err) { return { error: String(err.message || err) }; }
 }
-function bulk_(operation, ids, status) {
+function bulk_(operation, ids, status, scheduledAt) {
   const posts = readAll_(), found = ids.map(id => posts.find(p => p.id === id)).filter(Boolean);
   if (!found.length) throw new Error('Select at least one existing post.');
   if (operation === 'delete') { found.forEach(p => delete_(p.id)); return { ok: true, count: found.length }; }
-  if (operation === 'status') { found.forEach(p => save_({ id: p.id, status: status || 'ready' })); return { ok: true, count: found.length }; }
-  if (operation === 'publish') return { posts: found.map(p => publish_(p)) };
+  if (operation === 'status') {
+    const patch = { status: status || 'ready' };
+    if (patch.status === 'scheduled') { const d = toDate_(scheduledAt); if (!d) throw new Error('Choose a valid publish date and time for the selected posts.'); patch.scheduledAt = stamp_(d); }
+    else if (patch.status === 'draft' || patch.status === 'ready') patch.scheduledAt = '';
+    found.forEach(p => save_(Object.assign({ id: p.id }, patch))); return { ok: true, count: found.length };
+  }
+  if (operation === 'publish') {
+    const results = found.map(p => {
+      try { return publish_(p); }
+      catch (e) { return save_({ id: p.id, status: 'failed', error: String(e.message || e).slice(0, 300) }); }
+    });
+    return { posts: results };
+  }
   throw new Error('Unknown bulk operation.');
 }
 
@@ -262,11 +242,11 @@ function publish_(post) {
   if (!post) throw new Error('Post not found.');
   if (post.status === 'published') throw new Error('This post is already published.');
   if (!tokenInfo_().connected) throw new Error('LinkedIn sign-in expired. Reconnect LinkedIn first.');
-  validateForPublish_(post);
-  const media = media_(post);
-  media.forEach(m => { if (!['image', 'document'].includes(m.type)) throw new Error('Video media is not supported by this LinkedIn integration. Remove the video or use an image or PDF document.'); });
-  if (media.length > 9) throw new Error('A post can have at most 9 attachments.');
   try {
+    validateForPublish_(post);
+    const media = media_(post);
+    media.forEach(m => { if (!['image', 'document'].includes(m.type)) throw new Error('Video media is not supported by this LinkedIn integration. Remove the video or use an image or PDF document.'); });
+    if (media.length > 9) throw new Error('A post can have at most 9 attachments.');
     const body = {
       author: P.getProperty('PERSON_URN'), commentary: escapeText_(post.body),
       visibility: 'PUBLIC', lifecycleState: 'PUBLISHED', isReshareDisabledByAuthor: false,

@@ -2,7 +2,7 @@
 // The key and the Apps Script URL exist only in Vercel environment variables, never in the browser.
 const { isAuthed } = require('./_auth');
 
-const ACTIONS = new Set(['list', 'save', 'delete', 'bulk', 'publishNow', 'authUrl', 'statsList', 'statsSave', 'statsSync', 'topicList', 'topicSave', 'topicDelete', 'aiAssist']);
+const ACTIONS = new Set(['list', 'save', 'delete', 'bulk', 'publishNow', 'authUrl', 'statsList', 'statsSave', 'statsSync', 'aiAssist']);
 
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');

@@ -22,7 +22,6 @@ function icon(name, size = 18) {
 
 const state = {
   posts: [],
-  topics: [],
   token: { connected: false, expiresAt: 0, name: '', picture: '' },
   view: 'planner',
   sel: null,        // id of the post open in the editor
@@ -33,6 +32,8 @@ const state = {
   cal: { y: 2026, m: 1 },
   calDay: '',
   selected: new Set(),
+  collapsedSeries: new Set(),
+  seriesInitialized: false,
 };
 let destroyPicker = null;
 
@@ -147,16 +148,15 @@ function showApp() {
 }
 async function logout() {
   try { await fetch('/api/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
-  state.posts = []; state.ed = null; state.sel = null; state.dirty = false;
+  state.posts = []; state.ed = null; state.sel = null; state.dirty = false; state.selected.clear();
   showLogin();
 }
 
 /* ---------- loading ---------- */
 async function loadAll() {
-  const [d, topics] = await Promise.all([api('list'), api('topicList')]);
+  const d = await api('list');
   state.token = d.token || state.token;
   state.posts = (d.posts || []).map(normalizePost);
-  state.topics = topics.topics || [];
 }
 async function refresh() {
   try {
@@ -234,21 +234,26 @@ function setView(v) {
 function renderAll() { if (state.view === 'planner') { renderHeader(); renderPlanner(); } else { renderHeader(); renderCalendar(); } }
 
 /* ---------- planner: sidebar ---------- */
-function postRow(p, extra = '') {
-  return `<button type="button" class="row ${state.sel === p.id ? 'sel' : ''}" data-act="open-post" data-id="${esc(p.id)}">
-    <span class="day">${p.day !== '' ? 'Day ' + esc(p.day) : ''}</span><span class="t">${esc(p.title || 'Untitled')}</span>${extra}</button>`;
-}
 function renderPlanner() {
   $('#view').innerHTML = `<div class="planner">
     <aside class="side">
       <section class="glass card" id="today"></section>
       <button class="btn primary wide" type="button" data-act="new-post">${icon('plus')} New post</button>
-      <section class="glass card bulk-tools"><div class="ed-head"><h2>Bulk tools</h2><span id="selCount" class="muted">0 selected</span></div>
+      <section class="glass card bulk-tools"><div class="bulk-head"><div><h2>Bulk actions</h2><p class="hint">Select posts below, then apply one action.</p></div><span id="selCount" class="muted">0 selected</span></div>
         <div class="actions"><button class="btn" type="button" data-act="import">Import</button><button class="btn" type="button" data-act="export-json">Export JSON</button><button class="btn" type="button" data-act="export-csv">Export CSV</button></div>
-        <div class="actions"><button class="btn" type="button" data-act="bulk-ready">Mark ready</button><button class="btn" type="button" data-act="bulk-delete">Delete selected</button></div>
-        <input id="importFile" class="hidden" type="file" accept=".json,.csv,application/json,text/csv"></section>
+        <label class="bulk-select-all"><input id="selectAll" type="checkbox"> Select all posts</label>
+        <div class="bulk-action-grid" aria-label="Bulk post actions">
+          <button class="btn" type="button" data-act="bulk-status" data-status="draft">Draft</button>
+          <button class="btn" type="button" data-act="bulk-status" data-status="ready">Ready</button>
+          <button class="btn" type="button" data-act="bulk-status" data-status="scheduled">Scheduled</button>
+          <button class="btn primary" type="button" data-act="bulk-publish">Publish</button>
+          <button class="btn danger" type="button" data-act="bulk-delete">Delete</button>
+        </div>
+        <label class="bulk-schedule-field hidden" id="bulkScheduleField"><span>Schedule selected for <em>(IST)</em></span><input id="bulkScheduledAt" type="datetime-local"></label>
+        </section>
+      <section class="glass card transfer-tools"><h2>Import</h2><p class="hint">Add posts from a validated JSON or CSV file.</p><button class="btn wide" type="button" data-act="import">Choose import file</button><input id="importFile" class="hidden" type="file" accept=".json,.csv,application/json,text/csv"></section>
+      <section class="glass card transfer-tools"><h2>Export</h2><p class="hint">Download posts with their image/PDF metadata.</p><div class="transfer-grid"><button class="btn" type="button" data-act="export-json">Export JSON</button><button class="btn" type="button" data-act="export-csv">Export CSV</button></div></section>
        <div id="seriesList" class="stack"></div>
-       <section class="glass card" id="topicLibrary"></section>
     </aside>
     <section class="work">
       <div class="glass card" id="editor"></div>
@@ -259,18 +264,7 @@ function renderPlanner() {
   renderEditorPane();
   renderPreviewShell();
 }
-function renderSidebar() { renderToday(); renderSeries(); renderTopicLibrary(); }
-function renderTopicLibrary() {
-  const host = $('#topicLibrary'); if (!host) return;
-  const topics = state.topics.filter(t => t.type === 'topic');
-  const hashtags = state.topics.filter(t => t.type === 'hashtag');
-  const item = t => `<li><button class="library-insert" type="button" data-act="insert-topic" data-value="${esc(t.value)}">${esc(t.value)}</button><button class="library-delete" type="button" data-act="delete-topic" data-id="${esc(t.id)}" aria-label="Delete ${esc(t.value)}">×</button></li>`;
-  host.innerHTML = `<div class="library-head"><h2>Topic library</h2><span class="muted">${state.topics.length}</span></div>
-    <form class="library-form" data-act="save-topic"><select id="topic-type" aria-label="Library item type"><option value="topic">Topic</option><option value="hashtag">Hashtag</option></select><input id="topic-value" placeholder="e.g. productivity or #buildinpublic" maxlength="80" required><button class="btn" type="submit">Save</button></form>
-    ${topics.length ? `<p class="sub">Topics</p><ul class="library-list">${topics.map(item).join('')}</ul>` : ''}
-    ${hashtags.length ? `<p class="sub">Hashtags</p><ul class="library-list">${hashtags.map(item).join('')}</ul>` : ''}
-    ${!state.topics.length ? '<p class="muted library-empty">Save topics and hashtags to reuse them in posts.</p>' : '<p class="hint">Click an item to insert it at the cursor.</p>'}`;
-}
+function renderSidebar() { renderToday(); renderSeries(); }
 function renderToday() {
   const host = $('#today'); if (!host) return;
   const n = nowIST(), key = dayKey(n);
@@ -285,30 +279,30 @@ function renderToday() {
   if (next) h += '<p class="sub">Next to schedule</p>' + postRow(next, `<span class="chip st-${next.status}">${esc(next.status)}</span>`);
   host.innerHTML = h;
 }
+function postRow(p, extra = '', options = {}) {
+  const main = `<button type="button" class="row-main ${state.sel === p.id ? 'sel' : ''}" data-act="open-post" data-id="${esc(p.id)}"><span class="day">${p.day !== '' ? 'Day ' + esc(p.day) : ''}</span><span class="t">${esc(p.title || 'Untitled')}</span>${extra}</button>`;
+  return options.selectable ? `<div class="row row-selectable"><input class="bulk-check" type="checkbox" data-id="${esc(p.id)}" ${state.selected.has(p.id) ? 'checked' : ''} aria-label="Select ${esc(p.title || 'Untitled')}">${main}</div>` : main;
+}
+function visiblePostIds() { return state.posts.map(p => p.id); }
 function renderSeries() {
   const host = $('#seriesList'); if (!host) return;
   const by = {};
   state.posts.forEach(p => (by[p.series || 'No series'] ||= []).push(p));
   const names = Object.keys(by);
   if (!names.length) { host.innerHTML = '<p class="muted" style="padding:6px 4px">No posts yet. Create your first one.</p>'; return; }
+  if (!state.seriesInitialized) { names.forEach(name => state.collapsedSeries.add(name)); state.seriesInitialized = true; }
   host.innerHTML = names.map(name => {
     const list = by[name].sort((a, b) => (a.day || 0) - (b.day || 0));
     const done = list.filter(p => p.status === 'published').length;
-    return `<section class="glass card"><h2>${esc(name)}</h2><div class="bar-track" role="img" aria-label="${done} of ${list.length} published"><i style="width:${(done / list.length) * 100}%"></i></div>
-      <p class="muted" style="font-size:13px;margin-bottom:6px">${done} of ${list.length} published</p>
-      ${list.map(p => postRow(p, `<input class="bulk-check" type="checkbox" data-id="${esc(p.id)}" ${state.selected?.has(p.id) ? 'checked' : ''} aria-label="Select ${esc(p.title || 'Untitled')}"><span class="chip st-${stClass(p)}">${esc(isLate(p) && p.status !== 'failed' ? 'late' : p.status)}</span>`)).join('')}</section>`;
+    const counts = ['draft', 'ready', 'scheduled', 'published'].filter(s => list.some(p => p.status === s)).map(s => `${list.filter(p => p.status === s).length} ${s}`).join(' · ');
+    return `<details class="glass card series-group" data-series="${esc(name)}" ${state.collapsedSeries.has(name) ? '' : 'open'}><summary><span><strong>${esc(name)}</strong><small>${counts || 'No posts'}</small></span><span class="series-progress">${done}/${list.length} published</span></summary><div class="bar-track" role="img" aria-label="${done} of ${list.length} published"><i style="width:${(done / list.length) * 100}%"></i></div>
+      <div class="series-posts">${list.map(p => postRow(p, `<span class="chip st-${stClass(p)}">${esc(isLate(p) && p.status !== 'failed' ? 'late' : p.status)}</span>`, { selectable: true })).join('')}</div></details>`;
   }).join('');
   const count = $('#selCount'); if (count) count.textContent = `${state.selected?.size || 0} selected`;
+  const all = $('#selectAll'); if (all) { const ids = visiblePostIds(); all.checked = ids.length > 0 && ids.every(id => state.selected.has(id)); all.indeterminate = ids.some(id => state.selected.has(id)) && !all.checked; }
 }
 
 /* ---------- planner: editor ---------- */
-function imgHint(ed) {
-  const el = $('#img-hint'); if (!el) return;
-  const raw = ($('#f-img') || {}).value || '';
-  if (!raw.trim()) el.textContent = 'Optional. Paste the share link from Google Drive (JPG, PNG or GIF).';
-  else if (ed.imageDriveId) el.textContent = 'Drive file found. The image is read from your Drive when the post goes out.';
-  else el.textContent = 'That is not a Google Drive file link. Open the file in Drive, choose Share, then Copy link.';
-}
 function updateCount() {
   const el = $('#count'); if (!el || !state.ed) return;
   const n = cpLength(state.ed.body || '');
@@ -359,10 +353,10 @@ function renderEditorPane() {
       <textarea id="f-body" aria-labelledby="lbl-body" ${dis}>${esc(ed.body)}</textarea>
      ${locked ? '' : '<p class="hint">Select text, then pick a style. LinkedIn has no rich text, so styles are special Unicode characters. They look right everywhere but screen readers may read them oddly, so use them sparingly.</p>'}
     </div>
-    ${locked ? '' : `<section class="assistant" aria-labelledby="assistant-title"><div class="assistant-head"><div><h3 id="assistant-title">Writing assistant</h3><p class="hint">Use your configured AI provider to draft or refine copy.</p></div><select id="ai-operation" aria-label="Writing assistant action"><option value="generate">Generate</option><option value="rewrite">Rewrite</option><option value="shorten">Shorten</option><option value="expand">Expand</option><option value="hook">Suggest hooks</option></select></div><input id="ai-instruction" placeholder="Optional direction, e.g. sound more practical" maxlength="300"><button class="btn primary" type="button" data-act="ai-assist">Run assistant</button><div id="ai-output" class="assistant-output hidden"></div></section>`}
-     <div class="field"><div class="field-head"><span>Attachments <em>(Google Drive)</em></span>${locked ? '' : '<button class="btn" type="button" data-act="add-media">Add attachment</button>'}</div>
-       <div id="media-list">${(ed.media || []).map((m, i) => `<div class="media-row"><select data-media="type" data-i="${i}" ${dis}><option value="image" ${m.type === 'image' ? 'selected' : ''}>Image</option><option value="document" ${m.type === 'document' ? 'selected' : ''}>PDF document</option><option value="video" ${m.type === 'video' ? 'selected' : ''}>Video (unsupported)</option></select><input data-media="driveId" data-i="${i}" placeholder="Google Drive share link" value="${esc(driveLink(m.driveId))}" ${dis}><input data-media="altText" data-i="${i}" placeholder="Alt text" value="${esc(m.altText || '')}" ${dis}>${locked ? '' : '<button class="icon-btn" type="button" data-act="remove-media" data-i="' + i + '" aria-label="Remove attachment">×</button>'}</div>`).join('')}</div>
-       <p class="hint">Images and PDF documents can be published. Video is stored for planning but publishing shows a clear unsupported-media error.</p></div>
+    ${locked ? '' : `<section class="assistant" aria-labelledby="assistant-title"><div class="assistant-head"><div><h3 id="assistant-title">Writing assistant</h3><p class="hint">Draft or improve this post without leaving the editor. Your text is only sent to the configured server-side AI provider when you run it.</p></div><span class="assistant-badge">AI</span></div><div class="assistant-controls"><label class="field"><span>Action</span><select id="ai-operation" aria-label="Writing assistant action"><option value="generate">Generate a post</option><option value="rewrite">Rewrite current post</option><option value="shorten">Shorten current post</option><option value="expand">Expand current post</option><option value="hook">Suggest opening hooks</option></select></label><label class="field"><span>Direction <em>(optional)</em></span><input id="ai-instruction" placeholder="e.g. sound more practical and direct" maxlength="300"></label></div><button class="btn primary" type="button" data-act="ai-assist">Run writing assistant</button><div id="ai-output" class="assistant-output hidden" aria-live="polite"></div></section>`}
+     <div class="field"><div class="field-head"><span>Attachments <em>(Google Drive)</em></span>${locked ? '' : '<span class="media-add-actions"><button class="btn" type="button" data-act="add-media" data-type="image">Add image</button><button class="btn" type="button" data-act="add-media" data-type="document">Add PDF</button></span>'}</div>
+       <div id="media-list">${(ed.media || []).map((m, i) => `<div class="media-row"><span class="media-number">${i + 1}</span><select data-media="type" data-i="${i}" ${dis}><option value="image" ${m.type === 'image' ? 'selected' : ''}>Image</option><option value="document" ${m.type === 'document' ? 'selected' : ''}>PDF document</option><option value="video" ${m.type === 'video' ? 'selected' : ''}>Video (unsupported)</option></select><input data-media="driveId" data-i="${i}" placeholder="Paste Google Drive share link" value="${esc(driveLink(m.driveId))}" ${dis}><input data-media="altText" data-i="${i}" placeholder="Alt text (recommended for images)" value="${esc(m.altText || '')}" ${dis}>${locked ? '' : '<button class="icon-btn" type="button" data-act="remove-media" data-i="' + i + '" aria-label="Remove attachment">×</button>'}</div>`).join('')}</div>
+       <p class="hint">Add as many images as needed, or one PDF document. The file stays private in Drive; the backend reads it when publishing.</p></div>
     <div class="field"><span>Publish at <em>(IST)</em></span><div class="picker" id="picker"></div></div>
     ${ed.error ? `<div class="alert err" role="alert">${esc(ed.error)}</div>` : ''}
     ${locked ? `<div class="alert note">This post is published, so it is read-only.${ed.publishedAt ? ' Published ' + esc(human(parseStamp(ed.publishedAt))) + '.' : ''}</div>` : ''}
@@ -653,6 +647,21 @@ async function persist(status) {
   } catch (e) { toast(e.message, { type: 'err' }); }
 }
 
+async function aiAssist() {
+  const ed = state.ed; if (!ed) return;
+  const operation = $('#ai-operation').value, instruction = $('#ai-instruction').value.trim();
+  if (operation === 'generate' && !ed.body.trim() && !instruction) { toast('Add a short brief in Direction before generating a post.', { type: 'info' }); $('#ai-instruction').focus(); return; }
+  try {
+    const d = await busy('Writing...', () => api('aiAssist', { operation, text: ed.body, instruction }));
+    const output = $('#ai-output'); output.innerHTML = `<div class="assistant-result"></div><div class="assistant-actions"><button class="btn primary" type="button" data-act="use-ai">Replace post</button><button class="btn" type="button" data-act="insert-ai">Insert below</button></div>`; $('.assistant-result', output).textContent = d.text; output.classList.remove('hidden');
+  } catch (e) { toast(e.message, { type: 'err' }); }
+}
+function useAi(mode) {
+  const output = $('#ai-output'); const text = $('.assistant-result', output)?.textContent || ''; const ta = $('#f-body');
+  if (!text || !ta || !state.ed) return;
+  const value = mode === 'replace' ? text : (ta.value.trim() ? ta.value.trimEnd() + '\n\n' + text : text);
+  ta.value = value; state.ed.body = value; state.dirty = true; updateCount(); updatePreview();
+}
 async function publishNow() {
   const ed = state.ed; if (!ed) return;
   const err = validateBody(ed);
@@ -694,9 +703,18 @@ async function deletePost() {
 }
 
 function selectedPosts() { return state.posts.filter(p => state.selected.has(p.id)); }
+function bulkScheduleValue() { const value = $('#bulkScheduledAt')?.value || ''; return value ? value.replace('T', ' ') : ''; }
 async function bulkStatus(status) {
   const posts = selectedPosts(); if (!posts.length) { toast('Select one or more posts first.', { type: 'info' }); return; }
-  try { const d = await busy('Updating selected posts...', () => api('bulk', { operation: 'status', status, ids: posts.map(p => p.id) })); state.selected.clear(); await refresh(); toast(`${d.count} post${d.count === 1 ? '' : 's'} updated.`); } catch (e) { toast(e.message, { type: 'err' }); }
+  const scheduledAt = status === 'scheduled' ? bulkScheduleValue() : '';
+  if (status === 'scheduled' && !scheduledAt) { toast('Choose a date and time before scheduling selected posts.', { type: 'err' }); return; }
+  try { const d = await busy(`Marking selected posts ${status}...`, () => api('bulk', { operation: 'status', status, scheduledAt, ids: posts.map(p => p.id) })); state.selected.clear(); await refresh(); toast(`${d.count} post${d.count === 1 ? '' : 's'} updated.`); } catch (e) { toast(e.message, { type: 'err' }); }
+}
+async function bulkPublish() {
+  const posts = selectedPosts(); if (!posts.length) { toast('Select one or more posts first.', { type: 'info' }); return; }
+  if (!state.token.connected) { toast('LinkedIn is not connected. Connect it first.', { type: 'err' }); return; }
+  if (!(await confirmDialog({ title: 'Publish selected posts?', message: `${posts.length} post${posts.length === 1 ? '' : 's'} will be sent to LinkedIn now.`, ok: 'Publish', danger: true }))) return;
+  try { const d = await busy('Publishing selected posts...', () => api('bulk', { operation: 'publish', ids: posts.map(p => p.id) })); state.selected.clear(); await refresh(); const failed = (d.posts || []).filter(p => p.status !== 'published').length; toast(failed ? `Published ${posts.length - failed}; ${failed} failed.` : `Published ${posts.length} post${posts.length === 1 ? '' : 's'}.`, { type: failed ? 'err' : 'ok' }); } catch (e) { toast(e.message, { type: 'err' }); }
 }
 async function bulkDelete() {
   const posts = selectedPosts(); if (!posts.length) { toast('Select one or more posts first.', { type: 'info' }); return; }
@@ -709,10 +727,25 @@ function exportPosts(format) {
   if (format === 'json') download('post-planner.json', JSON.stringify(rows, null, 2), 'application/json');
   else { const cols = ['series','day','title','body','media','status','scheduledAt']; const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"'; download('post-planner.csv', [cols.join(','), ...rows.map(r => cols.map(c => q(c === 'media' ? JSON.stringify(r[c]) : r[c])).join(','))].join('\n'), 'text/csv'); }
 }
+function parseCsv(text) {
+  const table = [], row = []; let cell = '', quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (quoted && text[i + 1] === '"') { cell += '"'; i += 1; }
+      else quoted = !quoted;
+    } else if (ch === ',' && !quoted) { row.push(cell); cell = ''; }
+    else if ((ch === '\n' || ch === '\r') && !quoted) { if (ch === '\r' && text[i + 1] === '\n') i += 1; row.push(cell); table.push(row.splice(0)); cell = ''; }
+    else cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); table.push(row); }
+  const cols = (table.shift() || []).map(c => c.trim());
+  return table.filter(r => r.some(Boolean)).map(r => Object.fromEntries(cols.map((c, i) => [c, r[i] || ''])));
+}
 function parseImport(text, name) {
   let rows;
   if (name.toLowerCase().endsWith('.json')) { try { rows = JSON.parse(text); } catch (e) { throw new Error('Import JSON is invalid.'); } if (!Array.isArray(rows)) throw new Error('JSON import must be an array of posts.'); }
-  else { const lines = text.split(/\r?\n/).filter(Boolean), cols = lines.shift().split(',').map(x => x.replace(/^"|"$/g, '')); rows = lines.map(line => { const vals = []; let cur = '', quoted = false; for (const ch of line) { if (ch === '"') quoted = !quoted; else if (ch === ',' && !quoted) { vals.push(cur); cur = ''; } else cur += ch; } vals.push(cur); return Object.fromEntries(cols.map((c, i) => [c, vals[i] || ''])); }); }
+  else rows = parseCsv(text);
   if (rows.length > 500) throw new Error('Import is limited to 500 posts at a time.');
   return rows.map((r, i) => { if (!r || typeof r !== 'object' || !String(r.body || '').trim()) throw new Error(`Row ${i + 1} needs post text (body).`); const media = Array.isArray(r.media) ? r.media : (r.media ? JSON.parse(r.media) : []); if (!Array.isArray(media)) throw new Error(`Row ${i + 1} has invalid media; use an array.`); return toPayload({ ...blankPost(), ...r, media }, r.status || 'draft'); });
 }
@@ -793,10 +826,14 @@ document.addEventListener('click', e => {
     case 'save-ready': persist('ready'); break;
     case 'schedule': persist('scheduled'); break;
     case 'publish': publishNow(); break;
+    case 'ai-assist': aiAssist(); break;
+    case 'use-ai': useAi('replace'); break;
+    case 'insert-ai': useAi('insert'); break;
     case 'delete': deletePost(); break;
-    case 'add-media': if (state.ed) { state.ed.media ||= []; state.ed.media.push({ driveId: '', type: 'image', altText: '' }); state.dirty = true; renderEditorPane(); updatePreview(); } break;
+    case 'add-media': if (state.ed) { state.ed.media ||= []; state.ed.media.push({ driveId: '', type: t.dataset.type || 'image', altText: '' }); state.dirty = true; renderEditorPane(); updatePreview(); } break;
     case 'remove-media': if (state.ed) { state.ed.media.splice(Number(t.dataset.i), 1); state.ed.imageDriveId = state.ed.media[0]?.driveId || ''; state.dirty = true; renderEditorPane(); updatePreview(); } break;
-    case 'bulk-ready': bulkStatus('ready'); break;
+    case 'bulk-status': if (t.dataset.status === 'scheduled') $('#bulkScheduleField')?.classList.remove('hidden'); bulkStatus(t.dataset.status); break;
+    case 'bulk-publish': bulkPublish(); break;
     case 'bulk-delete': bulkDelete(); break;
     case 'export-json': exportPosts('json'); break;
     case 'export-csv': exportPosts('csv'); break;
@@ -810,6 +847,18 @@ document.addEventListener('click', e => {
   }
 });
 document.addEventListener('change', e => { if (e.target.id === 'importFile' && e.target.files[0]) { importPosts(e.target.files[0]); e.target.value = ''; } });
+document.addEventListener('change', e => {
+  if (e.target.id === 'selectAll') {
+    visiblePostIds().forEach(id => e.target.checked ? state.selected.add(id) : state.selected.delete(id));
+    renderSeries();
+  }
+});
+document.addEventListener('toggle', e => {
+  if (e.target.matches('details[data-series]')) {
+    const name = e.target.dataset.series;
+    if (e.target.open) state.collapsedSeries.delete(name); else state.collapsedSeries.add(name);
+  }
+}, true);
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && state.view === 'planner' && state.ed && $('#modal').classList.contains('hidden') && !$('#picker .pop:not(.hidden)')) {
     closeEditor();
