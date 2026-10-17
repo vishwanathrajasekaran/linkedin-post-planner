@@ -6,7 +6,9 @@ A small, self-hosted tool for planning, scheduling and publishing LinkedIn posts
 - **Editor:** bold, italic, underline, strikethrough, monospace, bullets, numbering and indent, with a LinkedIn-style preview (desktop and mobile).
 - **Calendar:** a month view of everything scheduled and published.
 - **Scheduling:** pick a date and time (IST) and the post goes out automatically, within about 15 minutes.
-- **Images:** attach a picture by pasting a Google Drive link.
+- **Media:** attach multiple Google Drive files with a type and alt text. Images and PDF documents publish through LinkedIn; video is retained for planning but clearly rejected when publishing.
+- **Bulk tools:** select posts in the planner to mark them ready or delete them together.
+- **Import/export:** move posts as validated JSON or CSV files, including attachment metadata.
 - **Look:** Liquid Glass design with day and night modes.
 
 It runs on free tiers: Google Sheets and Apps Script for the data and the scheduler, Vercel for the website.
@@ -144,9 +146,11 @@ Select text, then use the toolbar or the shortcuts: **Cmd/Ctrl+B** bold, **Cmd/C
 
 Indentation uses wide space characters. LinkedIn may trim or keep them, so check with a test post.
 
-### Images
+### Media attachments
 
-Paste the **Share link** of an image in your Google Drive (JPG, PNG or GIF, keep it under about 5 MB). The backend reads the file as you, so it does not need to be public. The preview in the page may not show the picture unless the file is shared by link, but the published post still includes it.
+Use **Add attachment** and paste the **Share link** of a Google Drive image or PDF. Add alt text for images. The backend reads the file as you, so it does not need to be public. Multiple images use LinkedIn's multi-image post format; a single PDF uses LinkedIn document media. Video rows are accepted for planning/import but publishing returns an actionable unsupported-media error. Existing rows using `imageDriveId` are automatically treated as one image attachment.
+
+Use **Export JSON** or **Export CSV** in the planner for backups and editing. Imports require a JSON array or a CSV with headers; every row must contain `body`, media must be an array (JSON) or JSON text in the CSV `media` column, and imports are limited to 500 rows. Invalid files identify the row and field that needs fixing.
 
 ### Times
 
@@ -234,7 +238,7 @@ Columns: `postId`, `capturedAt`, `impressions`, `reach`, `reactions`, `comments`
 
 ### The Posts sheet
 
-Columns: `id`, `series`, `day`, `title`, `body`, `imageDriveId`, `status`, `scheduledAt`, `publishedAt`, `linkedinUrn`, `error`. Status is one of `draft`, `ready`, `scheduled`, `published` or `failed`. You can edit the Sheet by hand, but keep the header row and the date format.
+Columns: `id`, `series`, `day`, `title`, `body`, `imageDriveId`, `media`, `status`, `scheduledAt`, `publishedAt`, `linkedinUrn`, `error`. `media` is a JSON array of `{driveId,type,altText}` objects. Status is one of `draft`, `ready`, `scheduled`, `published` or `failed`. Running `setup()` inserts the new `media` column for existing sheets; legacy `imageDriveId` values continue to work.
 
 ---
 
@@ -253,7 +257,7 @@ Columns: `id`, `series`, `day`, `title`, `body`, `imageDriveId`, `status`, `sche
 - Personal profile only, no Company Pages.
 - No exact-minute scheduling: the timer runs every 15 minutes.
 - No automatic token renewal: reconnect about every 60 days.
-- Text, a single image and hashtags only. No multi-image posts, polls, documents, articles or video.
+- Text, images, and one PDF document are supported. Polls, articles, and video publishing are not supported by this integration.
 - You cannot read your published posts' stats back from LinkedIn with this setup.
 - Apps Script has daily quotas on URL fetches and trigger runtime. A personal posting schedule is far below them.
 
