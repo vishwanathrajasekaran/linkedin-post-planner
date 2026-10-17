@@ -1,0 +1,37 @@
+/* Insights tab. Uses the same Liquid Glass tokens as styles.css. */
+.ins { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.ins > * { min-width: 0; }
+.ins-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ins-head .spacer { flex: 1; }
+.ins-head h2 { font-size: 21px; }
+.ins-h { font-size: 15px; margin: 0 0 12px; }
+.tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.tile { padding: 16px 18px; border-radius: var(--r-md); display: grid; gap: 4px; }
+.tile span { font-size: 12.5px; font-weight: 650; color: var(--muted); }
+.tile strong { font-size: 26px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.ins-chart { overflow-x: auto; }
+.ins-chart svg { display: block; max-width: none; }
+.ins-head .seg { max-width: 100%; }
+.ins-chart .bar { fill: var(--accent); }
+.ins-chart .bar:hover { fill: var(--accent-2); }
+.ins-chart .grid { stroke: var(--line); stroke-width: 1; }
+.ins-chart .ax { fill: var(--muted); font-size: 11px; font-family: var(--font); }
+.ins-table { overflow-x: auto; }
+.ins-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.ins-table th, .ins-table td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.ins-table tbody tr:last-child td { border-bottom: 0; }
+.ins-table tbody tr:hover { background: var(--field); }
+.ins-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.ins-table .nw { white-space: nowrap; }
+.ins-table .pt { min-width: 220px; max-width: 360px; }
+.ins-table .acts { text-align: right; }
+.ins-table .acts .btn { padding: 5px 12px; font-size: 13px; text-decoration: none; display: inline-block; }
+.sortb { border: 0; background: none; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 650; color: var(--muted); padding: 0; white-space: nowrap; }
+.ins-table th.pt { font-size: 12.5px; font-weight: 650; color: var(--muted); }
+.ins-table th.num .sortb { text-align: right; }
+.sortb:hover { color: var(--ink); }
+.ins-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ins-form .field:first-child { grid-column: 1 / -1; }
+.ins-form input { width: 100%; }
+@media (max-width: 900px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ins-form { grid-template-columns: 1fr; } }
