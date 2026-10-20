@@ -34,8 +34,13 @@ const state = {
   selected: new Set(),
   collapsedSeries: new Set(),
   seriesInitialized: false,
+  bulkAction: '',
+  bulkScheduledAt: '',
 };
 let destroyPicker = null;
+let bulkRunning = false;
+let importRunning = false;
+let importSession = null;
 
 /* ---------- server calls ---------- */
 async function api(action, body = {}) {
@@ -121,6 +126,7 @@ const liUrl = urn => (/^urn:li:[A-Za-z]+:\d+$/.test(urn || '') ? `https://www.li
 function blankPost(over = {}) {
   return { id: '', series: '', day: '', title: '', body: '', imageDriveId: '', media: [], status: 'draft', scheduledAt: '', publishedAt: '', linkedinUrn: '', error: '', ...over };
 }
+function workingCopy(post) { return { ...post, media: (post.media || []).map(m => ({ ...m })) }; }
 function postStamp(p) {
   return parseStamp(p.status === 'published' ? (p.publishedAt || p.scheduledAt) : p.scheduledAt);
 }
@@ -149,6 +155,7 @@ function showApp() {
 async function logout() {
   try { await fetch('/api/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
   state.posts = []; state.ed = null; state.sel = null; state.dirty = false; state.selected.clear();
+  importSession = null;
   showLogin();
 }
 
@@ -166,7 +173,7 @@ async function refresh() {
     let reopened = false;
     if (state.ed && state.ed.id && !state.dirty) {
       const p = state.posts.find(x => x.id === state.ed.id);
-      if (p && (p.status !== state.ed.status || p.error !== state.ed.error || p.publishedAt !== state.ed.publishedAt)) { state.ed = { ...p }; reopened = true; }
+      if (p && (p.status !== state.ed.status || p.error !== state.ed.error || p.publishedAt !== state.ed.publishedAt)) { state.ed = workingCopy(p); reopened = true; }
     }
     renderHeader();
     if (state.view === 'planner') {
@@ -240,19 +247,20 @@ function renderPlanner() {
       <section class="glass card" id="today"></section>
       <button class="btn primary wide" type="button" data-act="new-post">${icon('plus')} New post</button>
       <section class="glass card bulk-tools"><div class="bulk-head"><div><h2>Bulk actions</h2><p class="hint">Select posts below, then apply one action.</p></div><span id="selCount" class="muted">0 selected</span></div>
-        <div class="actions"><button class="btn" type="button" data-act="import">Import</button><button class="btn" type="button" data-act="export-json">Export JSON</button><button class="btn" type="button" data-act="export-csv">Export CSV</button></div>
         <label class="bulk-select-all"><input id="selectAll" type="checkbox"> Select all posts</label>
-        <div class="bulk-action-grid" aria-label="Bulk post actions">
-          <button class="btn" type="button" data-act="bulk-status" data-status="draft">Draft</button>
-          <button class="btn" type="button" data-act="bulk-status" data-status="ready">Ready</button>
-          <button class="btn" type="button" data-act="bulk-status" data-status="scheduled">Scheduled</button>
-          <button class="btn primary" type="button" data-act="bulk-publish">Publish</button>
-          <button class="btn danger" type="button" data-act="bulk-delete">Delete</button>
-        </div>
-        <label class="bulk-schedule-field hidden" id="bulkScheduleField"><span>Schedule selected for <em>(IST)</em></span><input id="bulkScheduledAt" type="datetime-local"></label>
-        </section>
-      <section class="glass card transfer-tools"><h2>Import</h2><p class="hint">Add posts from a validated JSON or CSV file.</p><button class="btn wide" type="button" data-act="import">Choose import file</button><input id="importFile" class="hidden" type="file" accept=".json,.csv,application/json,text/csv"></section>
-      <section class="glass card transfer-tools"><h2>Export</h2><p class="hint">Download posts with their image/PDF metadata.</p><div class="transfer-grid"><button class="btn" type="button" data-act="export-json">Export JSON</button><button class="btn" type="button" data-act="export-csv">Export CSV</button></div></section>
+        <form class="bulk-action-form">
+          <div class="bulk-action-controls"><label class="field"><span>Action</span><select id="bulkAction" required>
+            <option value="">Choose an action</option><option value="draft">Draft</option><option value="ready">Ready</option><option value="scheduled">Scheduled</option><option value="publish">Publish</option><option value="delete">Delete</option>
+          </select></label><button class="btn primary" type="submit" disabled>Submit</button></div>
+          <label class="field bulk-schedule-field hidden" id="bulkScheduleField"><span>Schedule selected for <em>(IST)</em></span><input id="bulkScheduledAt" type="datetime-local" disabled></label>
+        </form>
+      </section>
+      <section class="glass card transfer-tools"><h2>Import / Export</h2><p class="hint">Transfer posts as JSON or CSV, including attachment metadata.</p>
+        <div class="transfer-actions"><button class="btn" type="button" data-act="import">Import</button><div class="export-tools">
+          <button class="btn" id="exportToggle" type="button" data-act="toggle-export" aria-expanded="false" aria-controls="exportOptions">Export</button>
+          <div id="exportOptions" class="hidden"><button class="btn" type="button" data-act="export-json">Export JSON</button><button class="btn" type="button" data-act="export-csv">Export CSV</button></div>
+        </div></div><input id="importFile" class="hidden" type="file" accept=".json,.csv,application/json,text/csv">
+      </section>
        <div id="seriesList" class="stack"></div>
     </aside>
     <section class="work">
@@ -260,6 +268,8 @@ function renderPlanner() {
       <div class="glass card" id="previewCard"></div>
     </section>
   </div>`;
+  $('#bulkAction').value = state.bulkAction;
+  $('#bulkScheduledAt').value = state.bulkScheduledAt;
   renderSidebar();
   renderEditorPane();
   renderPreviewShell();
@@ -284,8 +294,22 @@ function postRow(p, extra = '', options = {}) {
   return options.selectable ? `<div class="row row-selectable"><input class="bulk-check" type="checkbox" data-id="${esc(p.id)}" ${state.selected.has(p.id) ? 'checked' : ''} aria-label="Select ${esc(p.title || 'Untitled')}">${main}</div>` : main;
 }
 function visiblePostIds() { return state.posts.map(p => p.id); }
+function syncBulkControls() {
+  const ids = visiblePostIds(), existing = new Set(ids);
+  state.selected.forEach(id => { if (!existing.has(id)) state.selected.delete(id); });
+  const count = $('#selCount'); if (count) count.textContent = `${state.selected.size} selected`;
+  const all = $('#selectAll');
+  if (all) { all.checked = ids.length > 0 && ids.every(id => state.selected.has(id)); all.indeterminate = state.selected.size > 0 && !all.checked; all.disabled = !ids.length; }
+  const submit = $('.bulk-action-form button[type="submit"]');
+  if (submit) submit.disabled = !state.selected.size || bulkRunning;
+  const scheduled = $('#bulkAction')?.value === 'scheduled';
+  $('#bulkScheduleField')?.classList.toggle('hidden', !scheduled);
+  const input = $('#bulkScheduledAt');
+  if (input) { input.disabled = !scheduled; input.required = scheduled; }
+}
 function renderSeries() {
   const host = $('#seriesList'); if (!host) return;
+  syncBulkControls();
   const by = {};
   state.posts.forEach(p => (by[p.series || 'No series'] ||= []).push(p));
   const names = Object.keys(by);
@@ -298,8 +322,6 @@ function renderSeries() {
     return `<details class="glass card series-group" data-series="${esc(name)}" ${state.collapsedSeries.has(name) ? '' : 'open'}><summary><span><strong>${esc(name)}</strong><small>${counts || 'No posts'}</small></span><span class="series-progress">${done}/${list.length} published</span></summary><div class="bar-track" role="img" aria-label="${done} of ${list.length} published"><i style="width:${(done / list.length) * 100}%"></i></div>
       <div class="series-posts">${list.map(p => postRow(p, `<span class="chip st-${stClass(p)}">${esc(isLate(p) && p.status !== 'failed' ? 'late' : p.status)}</span>`, { selectable: true })).join('')}</div></details>`;
   }).join('');
-  const count = $('#selCount'); if (count) count.textContent = `${state.selected?.size || 0} selected`;
-  const all = $('#selectAll'); if (all) { const ids = visiblePostIds(); all.checked = ids.length > 0 && ids.every(id => state.selected.has(id)); all.indeterminate = ids.some(id => state.selected.has(id)) && !all.checked; }
 }
 
 /* ---------- planner: editor ---------- */
@@ -327,7 +349,7 @@ function renderEditorPane() {
     ? `${url ? `<a class="btn" target="_blank" rel="noopener" href="${esc(url)}">View on LinkedIn</a>` : ''}<button class="btn" type="button" data-act="duplicate">Duplicate as draft</button><span class="spacer"></span><button class="btn danger" type="button" data-act="delete">Delete</button>`
     : `<button class="btn" type="button" data-act="save-draft">Save draft</button><button class="btn" type="button" data-act="save-ready">Mark ready</button><button class="btn primary" type="button" data-act="schedule">Schedule</button><button class="btn" type="button" data-act="publish">Publish now</button><span class="spacer"></span>${ed.id ? '<button class="btn danger" type="button" data-act="delete">Delete</button>' : ''}`;
   host.innerHTML = `
-    <div class="ed-head"><h2>${ed.id ? 'Edit post' : 'New post'}</h2><div class="ed-head-actions">${ed.id ? `<span class="chip st-${stClass(ed)}">${esc(ed.status)}</span>` : ''}<button type="button" class="icon-btn" data-act="close-editor" aria-label="Close post editor" title="Close">${icon('close')}</button></div></div>
+    <div class="ed-head"><h2 tabindex="-1">${ed.id ? 'Edit post' : 'New post'}</h2><div class="ed-head-actions">${ed.id ? `<span class="chip st-${stClass(ed)}">${esc(ed.status)}</span>` : ''}<button type="button" class="icon-btn" data-act="close-editor" aria-label="Close post editor" title="Close">${icon('close')}</button></div></div>
     <div class="grid2">
       <label class="field"><span>Series</span><input id="f-series" list="series-dl" autocomplete="off" value="${esc(ed.series)}" ${dis}>
         <datalist id="series-dl">${names.map(s => `<option value="${esc(s)}">`).join('')}</datalist></label>
@@ -563,11 +585,18 @@ async function guardDirty() {
   if (!state.dirty) return true;
   return confirmDialog({ title: 'Discard unsaved changes?', message: 'Your edits to this post have not been saved.', ok: 'Discard', danger: true });
 }
+function focusEditor() {
+  const host = $('#editor'); if (!host || !state.ed) return;
+  const target = $('#f-body:not(:disabled)', host) || $('.ed-head h2', host);
+  if (target) target.focus({ preventScroll: true });
+  if (window.matchMedia('(max-width: 900px)').matches) host.scrollIntoView({ block: 'start', behavior: 'auto' });
+}
 async function openPost(id) {
   if (!(await guardDirty())) return;
   const p = state.posts.find(x => x.id === id); if (!p) return;
-  state.sel = id; state.ed = { ...p }; state.dirty = false; state.expanded = false;
+  state.sel = id; state.ed = workingCopy(p); state.dirty = false; state.expanded = false;
   setView('planner');
+  focusEditor();
 }
 async function newPost(opts = {}) {
   if (!(await guardDirty())) return;
@@ -586,7 +615,7 @@ async function newPost(opts = {}) {
   }
   state.sel = null; state.ed = ed; state.dirty = false; state.expanded = false;
   setView('planner');
-  const t = $('#f-title'); if (t) t.focus();
+  focusEditor();
 }
 
 function toPayload(ed, status) {
@@ -608,7 +637,7 @@ function afterSave(post) {
   const np = normalizePost(post);
   const i = state.posts.findIndex(p => p.id === np.id);
   if (i >= 0) state.posts[i] = np; else state.posts.push(np);
-  state.ed = { ...np }; state.sel = np.id; state.dirty = false;
+  state.ed = workingCopy(np); state.sel = np.id; state.dirty = false;
   renderAll();
 }
 
@@ -704,10 +733,26 @@ async function deletePost() {
 
 function selectedPosts() { return state.posts.filter(p => state.selected.has(p.id)); }
 function bulkScheduleValue() { const value = $('#bulkScheduledAt')?.value || ''; return value ? value.replace('T', ' ') : ''; }
+async function submitBulkAction() {
+  if (bulkRunning) return;
+  if (!selectedPosts().length) { syncBulkControls(); toast('Select one or more posts first.', { type: 'info' }); return; }
+  const action = $('#bulkAction')?.value;
+  if (!['draft', 'ready', 'scheduled', 'publish', 'delete'].includes(action)) { toast('Choose a bulk action first.', { type: 'info' }); $('#bulkAction')?.focus(); return; }
+  bulkRunning = true; syncBulkControls();
+  try {
+    if (action === 'publish') await bulkPublish();
+    else if (action === 'delete') await bulkDelete();
+    else await bulkStatus(action);
+  } finally { bulkRunning = false; syncBulkControls(); }
+}
 async function bulkStatus(status) {
   const posts = selectedPosts(); if (!posts.length) { toast('Select one or more posts first.', { type: 'info' }); return; }
   const scheduledAt = status === 'scheduled' ? bulkScheduleValue() : '';
-  if (status === 'scheduled' && !scheduledAt) { toast('Choose a date and time before scheduling selected posts.', { type: 'err' }); return; }
+  if (status === 'scheduled') {
+    if (!validStamp(scheduledAt)) { toast('Choose a valid date and time before scheduling selected posts.', { type: 'err' }); $('#bulkScheduledAt')?.focus(); return; }
+    const invalid = posts.find(p => validateBody(p));
+    if (invalid) { toast(`${invalid.title || 'Untitled'}: ${validateBody(invalid)}`, { type: 'err' }); return; }
+  }
   try { const d = await busy(`Marking selected posts ${status}...`, () => api('bulk', { operation: 'status', status, scheduledAt, ids: posts.map(p => p.id) })); state.selected.clear(); await refresh(); toast(`${d.count} post${d.count === 1 ? '' : 's'} updated.`); } catch (e) { toast(e.message, { type: 'err' }); }
 }
 async function bulkPublish() {
@@ -719,37 +764,171 @@ async function bulkPublish() {
 async function bulkDelete() {
   const posts = selectedPosts(); if (!posts.length) { toast('Select one or more posts first.', { type: 'info' }); return; }
   if (!(await confirmDialog({ title: 'Delete selected posts?', message: `This removes ${posts.length} post${posts.length === 1 ? '' : 's'} from the planner.`, ok: 'Delete', danger: true }))) return;
-  try { const d = await busy('Deleting selected posts...', () => api('bulk', { operation: 'delete', ids: posts.map(p => p.id) })); state.selected.clear(); await refresh(); toast(`${d.count} post${d.count === 1 ? '' : 's'} deleted.`, { type: 'info' }); } catch (e) { toast(e.message, { type: 'err' }); }
+  try {
+    const d = await busy('Deleting selected posts...', () => api('bulk', { operation: 'delete', ids: posts.map(p => p.id) }));
+    const ids = new Set(posts.map(p => p.id));
+    state.posts = state.posts.filter(p => !ids.has(p.id)); state.selected.clear();
+    if (ids.has(state.sel)) { state.ed = null; state.sel = null; state.dirty = false; }
+    renderAll(); await refresh();
+    toast(`${d.count} post${d.count === 1 ? '' : 's'} deleted.`, { type: 'info' });
+  } catch (e) { toast(e.message, { type: 'err' }); }
 }
 function download(name, content, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([content], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
 function exportPosts(format) {
-  const rows = state.posts.map(p => ({ series: p.series, day: p.day, title: p.title, body: p.body, media: p.media || [], status: p.status, scheduledAt: p.scheduledAt }));
+  const rows = state.posts.map(p => ({ series: p.series, day: p.day, title: p.title, body: p.body, imageDriveId: p.imageDriveId, media: p.media || [], status: p.status, scheduledAt: p.scheduledAt, publishedAt: p.publishedAt, linkedinUrn: p.linkedinUrn, error: p.error }));
   if (format === 'json') download('post-planner.json', JSON.stringify(rows, null, 2), 'application/json');
-  else { const cols = ['series','day','title','body','media','status','scheduledAt']; const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"'; download('post-planner.csv', [cols.join(','), ...rows.map(r => cols.map(c => q(c === 'media' ? JSON.stringify(r[c]) : r[c])).join(','))].join('\n'), 'text/csv'); }
+  else { const cols = ['series','day','title','body','imageDriveId','media','status','scheduledAt','publishedAt','linkedinUrn','error']; const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"'; download('post-planner.csv', [cols.join(','), ...rows.map(r => cols.map(c => q(c === 'media' ? JSON.stringify(r[c]) : r[c])).join(','))].join('\n'), 'text/csv'); }
+  setExportOpen(false, true);
+}
+function setExportOpen(open, restoreFocus = false) {
+  const toggle = $('#exportToggle'), options = $('#exportOptions');
+  if (!toggle || !options) return;
+  toggle.setAttribute('aria-expanded', String(open)); options.classList.toggle('hidden', !open);
+  if (restoreFocus) toggle.focus();
 }
 function parseCsv(text) {
-  const table = [], row = []; let cell = '', quoted = false;
+  text = text.replace(/^\uFEFF/, '');
+  const table = [], row = []; let cell = '', mode = 'start';
+  const fail = message => { throw new Error(`CSV row ${table.length + 1}, column ${row.length + 1}: ${message}`); };
+  const finishCell = () => { row.push(cell); cell = ''; mode = 'start'; };
   for (let i = 0; i < text.length; i += 1) {
     const ch = text[i];
-    if (ch === '"') {
-      if (quoted && text[i + 1] === '"') { cell += '"'; i += 1; }
-      else quoted = !quoted;
-    } else if (ch === ',' && !quoted) { row.push(cell); cell = ''; }
-    else if ((ch === '\n' || ch === '\r') && !quoted) { if (ch === '\r' && text[i + 1] === '\n') i += 1; row.push(cell); table.push(row.splice(0)); cell = ''; }
-    else cell += ch;
+    if (mode === 'quoted') {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i += 1; }
+      else if (ch === '"') mode = 'closed';
+      else cell += ch;
+    } else if (ch === ',') finishCell();
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i += 1;
+      finishCell(); table.push(row.splice(0));
+    } else if (ch === '"') {
+      if (mode !== 'start') fail('unexpected quote; quote the entire field and double embedded quotes.');
+      mode = 'quoted';
+    } else {
+      if (mode === 'closed') fail('unexpected text after a closing quote.');
+      cell += ch; mode = 'unquoted';
+    }
   }
-  if (cell || row.length) { row.push(cell); table.push(row); }
+  if (mode === 'quoted') fail('unclosed quoted field.');
+  if (cell || row.length || mode !== 'start') { finishCell(); table.push(row); }
   const cols = (table.shift() || []).map(c => c.trim());
-  return table.filter(r => r.some(Boolean)).map(r => Object.fromEntries(cols.map((c, i) => [c, r[i] || ''])));
+  if (!cols.length || cols.some(c => !c)) throw new Error('CSV header: every column needs a field name.');
+  if (new Set(cols).size !== cols.length) throw new Error('CSV header: duplicate field names are not allowed.');
+  if (!cols.includes('body')) throw new Error('CSV header: missing required body field.');
+  return table.flatMap((r, i) => {
+    if (r.length === 1 && r[0] === '') return [];
+    if (r.length !== cols.length) throw new Error(`CSV row ${i + 2}: expected ${cols.length} fields but found ${r.length}.`);
+    return [Object.fromEntries(cols.map((c, j) => [c, r[j]]))];
+  });
+}
+function validStamp(value) {
+  if (typeof value !== 'string') return null;
+  const raw = value.trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/.exec(raw);
+  if (!m) return null;
+  const [y, mo, d, h, mi, s] = m.slice(1, 7).map(v => Number(v || 0));
+  if (y < 1000 || mo < 1 || mo > 12 || d < 1 || d > daysIn(y, mo) || h > 23 || mi > 59 || s > 59) return null;
+  const stamp = parseStamp(raw);
+  return stamp && Number.isFinite(toEpoch(stamp)) ? fmtStamp(stamp) : null;
 }
 function parseImport(text, name) {
+  if (!/\.(json|csv)$/i.test(name)) throw new Error('Choose a .json or .csv file to import.');
+  text = text.replace(/^\uFEFF/, '');
+  if (!text.trim()) throw new Error('The import file is empty.');
   let rows;
   if (name.toLowerCase().endsWith('.json')) { try { rows = JSON.parse(text); } catch (e) { throw new Error('Import JSON is invalid.'); } if (!Array.isArray(rows)) throw new Error('JSON import must be an array of posts.'); }
   else rows = parseCsv(text);
+  if (!rows.length) throw new Error('The import file contains no posts.');
   if (rows.length > 500) throw new Error('Import is limited to 500 posts at a time.');
-  return rows.map((r, i) => { if (!r || typeof r !== 'object' || !String(r.body || '').trim()) throw new Error(`Row ${i + 1} needs post text (body).`); const media = Array.isArray(r.media) ? r.media : (r.media ? JSON.parse(r.media) : []); if (!Array.isArray(media)) throw new Error(`Row ${i + 1} has invalid media; use an array.`); return toPayload({ ...blankPost(), ...r, media }, r.status || 'draft'); });
+  const ids = new Set();
+  return rows.map((r, i) => {
+    const fail = (field, message) => { throw new Error(`Row ${i + 1}, ${field}: ${message}`); };
+    if (!r || typeof r !== 'object' || Array.isArray(r)) fail('post', 'use an object with named fields.');
+    const string = (field, fallback = '') => {
+      if (r[field] == null) return fallback;
+      if (typeof r[field] !== 'string') fail(field, 'must be text.');
+      return r[field];
+    };
+    const body = string('body');
+    if (!body.trim()) fail('body', 'post text is required.');
+    if (cpLength(body) > 3000) fail('body', 'must be at most 3,000 characters.');
+    const status = string('status').trim() || 'draft';
+    if (!['draft', 'ready', 'scheduled', 'published', 'failed'].includes(status)) fail('status', 'use draft, ready, scheduled, published, or failed.');
+    const scheduled = string('scheduledAt').trim(), published = string('publishedAt').trim();
+    const scheduledAt = scheduled ? validStamp(scheduled) : '';
+    const publishedAt = published ? validStamp(published) : '';
+    if (scheduled && !scheduledAt) fail('scheduledAt', 'use a real date/time in YYYY-MM-DD HH:mm (IST) or ISO format with a time zone.');
+    if (status === 'scheduled' && !scheduledAt) fail('scheduledAt', 'is required for scheduled posts.');
+    if (published && !publishedAt) fail('publishedAt', 'use a real date/time in YYYY-MM-DD HH:mm (IST) or ISO format with a time zone.');
+    const day = r.day == null || r.day === '' ? '' : Number(r.day);
+    if (day !== '' && (!['number', 'string'].includes(typeof r.day) || !Number.isSafeInteger(day) || day < 1)) fail('day', 'must be a positive whole number or empty.');
+    const image = string('imageDriveId').trim(), imageDriveId = image ? driveId(image) : '';
+    if (image && !imageDriveId) fail('imageDriveId', 'use a valid Google Drive ID or share link.');
+    let media = r.media == null || r.media === '' ? [] : r.media;
+    if (typeof media === 'string') { try { media = JSON.parse(media); } catch (e) { fail('media', 'must contain valid JSON for an array of attachments.'); } }
+    if (!Array.isArray(media)) fail('media', 'must be an array of attachments.');
+    media = media.map((m, j) => {
+      const field = `media[${j + 1}]`;
+      if (!m || typeof m !== 'object' || Array.isArray(m)) fail(field, 'must be an attachment object.');
+      const raw = m.driveId || m.id || '';
+      if (typeof raw !== 'string' || !driveId(raw)) fail(`${field}.driveId`, 'use a valid Google Drive ID or share link.');
+      if (m.type != null && typeof m.type !== 'string') fail(`${field}.type`, 'must be text.');
+      const type = String(m.type || 'image').toLowerCase();
+      if (!['image', 'document', 'video'].includes(type)) fail(`${field}.type`, 'use image, document, or video (planning only).');
+      if (m.altText != null && typeof m.altText !== 'string') fail(`${field}.altText`, 'must be text.');
+      return { driveId: driveId(raw), type, altText: m.altText || '' };
+    });
+    const title = string('title');
+    if (!media.length && imageDriveId) media = [{ driveId: imageDriveId, type: 'image', altText: title }];
+    if (status === 'scheduled') {
+      if (media.length > 9) fail('media', 'scheduled posts support at most 9 attachments.');
+      if (media.some(m => m.type === 'video')) fail('media', 'video is for planning only; it cannot be scheduled for publishing.');
+      if (media.length > 1 && media.some(m => m.type !== 'image')) fail('media', 'use multiple images or one PDF document.');
+    }
+    const post = { series: string('series').trim(), day, title: title.trim(), body, imageDriveId: imageDriveId || media[0]?.driveId || '', media, status, scheduledAt, publishedAt, linkedinUrn: string('linkedinUrn'), error: string('error') };
+    const id = string('id').trim();
+    if (id) { if (ids.has(id)) fail('id', 'duplicate post ID in this file.'); ids.add(id); post.id = id; }
+    return post;
+  });
 }
-async function importPosts(file) { try { const rows = parseImport(await file.text(), file.name); for (const post of rows) await api('save', { post }); await loadAll(); renderAll(); toast(`Imported ${rows.length} post${rows.length === 1 ? '' : 's'}.`); } catch (e) { toast(e.message || 'Import failed.', { type: 'err', ms: 9000 }); } }
+function importId() {
+  return 'import-' + (typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join(''));
+}
+async function importPosts(file) {
+  if (importRunning) return;
+  importRunning = true;
+  try {
+    const text = await busy('Reading import file...', () => file.text());
+    const rows = parseImport(text, file.name); // Validate every row before the first save.
+    if (importSession?.text === text && importSession.name === file.name && importSession.completed.size === rows.length) { toast('This file has already been imported in this tab.', { type: 'info' }); return; }
+    if (!(await guardDirty())) return;
+    if (!importSession || importSession.text !== text || importSession.name !== file.name) {
+      importSession = { text, name: file.name, rows: rows.map(post => ({ ...post, id: post.id || importId() })), completed: new Set() };
+    }
+    const session = importSession;
+    let failure = null, failedRow = 0, refreshFailed = false;
+    await busy('Importing posts...', async () => {
+      for (let i = 0; i < session.rows.length; i += 1) {
+        if (session.completed.has(i)) continue;
+        $('#busyLabel').textContent = `Importing post ${i + 1} of ${session.rows.length}...`;
+        try {
+          const d = await api('save', { post: session.rows[i] });
+          if (!d.post || d.post.id !== session.rows[i].id) throw new Error('The server did not confirm the saved post.');
+          session.completed.add(i);
+          const post = normalizePost(d.post), existing = state.posts.findIndex(p => p.id === post.id);
+          if (existing < 0) state.posts.push(post); else state.posts[existing] = post;
+        } catch (e) { failure = e; failedRow = i + 1; break; }
+      }
+      try { await loadAll(); } catch (e) { refreshFailed = true; }
+    });
+    if (session.completed.size) { state.ed = null; state.sel = null; state.dirty = false; }
+    renderAll();
+    const count = session.completed.size;
+    if (failure) toast(`Imported ${count} of ${session.rows.length} posts. Row ${failedRow} was not confirmed: ${failure.message} Re-select the same unchanged file in this tab to resume safely.${refreshFailed ? ' Refresh also failed; the list may be incomplete.' : ''}`, { type: 'err', ms: 18000 });
+    else toast(`Imported ${count} post${count === 1 ? '' : 's'}.${refreshFailed ? ' Refresh failed; reload to confirm the full list.' : ''}`, { type: refreshFailed ? 'info' : 'ok', ms: 9000 });
+  } catch (e) { toast(e.message || 'Import failed.', { type: 'err', ms: 9000 }); }
+  finally { importRunning = false; }
+}
 
 /* ---------- calendar ---------- */
 function renderCalendar() {
@@ -805,8 +984,7 @@ function shiftMonth(dir) {
 
 /* ---------- events ---------- */
 document.addEventListener('click', e => {
-  const check = e.target.closest('.bulk-check');
-  if (check) { e.stopPropagation(); if (check.checked) state.selected.add(check.dataset.id); else state.selected.delete(check.dataset.id); const c = $('#selCount'); if (c) c.textContent = `${state.selected.size} selected`; return; }
+  if (!e.target.closest('.export-tools')) setExportOpen(false);
   const t = e.target.closest('[data-act]'); if (!t) return;
   switch (t.dataset.act) {
     case 'view': setView(t.dataset.v); break;
@@ -832,9 +1010,7 @@ document.addEventListener('click', e => {
     case 'delete': deletePost(); break;
     case 'add-media': if (state.ed) { state.ed.media ||= []; state.ed.media.push({ driveId: '', type: t.dataset.type || 'image', altText: '' }); state.dirty = true; renderEditorPane(); updatePreview(); } break;
     case 'remove-media': if (state.ed) { state.ed.media.splice(Number(t.dataset.i), 1); state.ed.imageDriveId = state.ed.media[0]?.driveId || ''; state.dirty = true; renderEditorPane(); updatePreview(); } break;
-    case 'bulk-status': if (t.dataset.status === 'scheduled') $('#bulkScheduleField')?.classList.remove('hidden'); bulkStatus(t.dataset.status); break;
-    case 'bulk-publish': bulkPublish(); break;
-    case 'bulk-delete': bulkDelete(); break;
+    case 'toggle-export': setExportOpen(t.getAttribute('aria-expanded') !== 'true'); break;
     case 'export-json': exportPosts('json'); break;
     case 'export-csv': exportPosts('csv'); break;
     case 'import': $('#importFile')?.click(); break;
@@ -848,10 +1024,20 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('change', e => { if (e.target.id === 'importFile' && e.target.files[0]) { importPosts(e.target.files[0]); e.target.value = ''; } });
 document.addEventListener('change', e => {
+  if (e.target.matches('.bulk-check')) {
+    if (e.target.checked) state.selected.add(e.target.dataset.id); else state.selected.delete(e.target.dataset.id);
+    syncBulkControls();
+  }
+  if (e.target.id === 'bulkAction') { state.bulkAction = e.target.value; syncBulkControls(); }
+  if (e.target.id === 'bulkScheduledAt') state.bulkScheduledAt = e.target.value;
   if (e.target.id === 'selectAll') {
     visiblePostIds().forEach(id => e.target.checked ? state.selected.add(id) : state.selected.delete(id));
     renderSeries();
   }
+});
+document.addEventListener('input', e => { if (e.target.id === 'bulkScheduledAt') state.bulkScheduledAt = e.target.value; });
+document.addEventListener('submit', e => {
+  if (e.target.matches('.bulk-action-form')) { e.preventDefault(); submitBulkAction(); }
 });
 document.addEventListener('toggle', e => {
   if (e.target.matches('details[data-series]')) {
@@ -860,6 +1046,7 @@ document.addEventListener('toggle', e => {
   }
 }, true);
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('#exportToggle')?.getAttribute('aria-expanded') === 'true') { e.preventDefault(); setExportOpen(false, true); return; }
   if (e.key === 'Escape' && state.view === 'planner' && state.ed && $('#modal').classList.contains('hidden') && !$('#picker .pop:not(.hidden)')) {
     closeEditor();
     return;

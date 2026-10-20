@@ -2,5 +2,10 @@
   "name": "post-planner",
   "version": "2.0.0",
   "private": true,
-  "engines": { "node": ">=18" }
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "check": "node --check app.js && node --check lib.js && node --check insights.js && node --check api/proxy.js && node --check api/login.js && node --check api/logout.js && node --check api/_auth.js",
+    "test": "node --test tests/import.test.cjs",
+    "test:browser": "node --test tests/browser.test.cjs"
+  }
 }

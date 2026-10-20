@@ -8,7 +8,7 @@ A small, self-hosted tool for planning, scheduling and publishing LinkedIn posts
 - **Calendar:** a month view of everything scheduled and published.
 - **Scheduling:** pick a date and time (IST) and the post goes out automatically, within about 15 minutes.
 - **Media:** attach multiple Google Drive files with a type and alt text. Images and PDF documents publish through LinkedIn; video is retained for planning but clearly rejected when publishing.
-- **Bulk tools:** select posts in the planner to mark them ready or delete them together.
+- **Bulk tools:** select posts, choose Draft, Ready, Scheduled, Publish, or Delete, then submit the action.
 - **Import/export:** move posts as validated JSON or CSV files, including attachment metadata.
 - **Look:** Liquid Glass design with day and night modes.
 
@@ -143,7 +143,8 @@ To test the backend, open the `/exec` URL in a browser. You should see a plain "
 - A published post becomes read-only. You can **Duplicate as draft** or open it on LinkedIn.
 - **Delete** removes a post from the planner only. A post already on LinkedIn stays there.
 - The **Calendar** tab shows the month. Click a day to see its posts or to start one on that day.
-- In the Planner sidebar, expand or collapse each series to reduce scrolling. Select individual posts or use **Select all posts**, then apply **Draft**, **Ready**, **Scheduled**, **Publish**, or **Delete**. Scheduling selected posts uses the shared IST date/time field.
+- In the Planner sidebar, expand or collapse each series to reduce scrolling. Select individual posts or use **Select all posts**, choose **Draft**, **Ready**, **Scheduled**, **Publish**, or **Delete** from the action dropdown, then click **Submit**. Choosing an action alone never changes posts. **Scheduled** reveals the required shared IST date/time field. Publish and Delete require confirmation.
+- On narrow screens, the editor and preview appear before the post list. Selecting a post or starting a new one brings the editor into view and focuses its Post text area. Published posts stay read-only.
 - The **Writing assistant** is in the editor. Choose an action, optionally add direction, and apply the returned text. If the AI variables are missing, the assistant reports a clear configuration error.
 
 ### Text formatting
@@ -156,7 +157,9 @@ Indentation uses wide space characters. LinkedIn may trim or keep them, so check
 
 Use **Add attachment** and paste the **Share link** of a Google Drive image or PDF. Add alt text for images. The backend reads the file as you, so it does not need to be public. Multiple images use LinkedIn's multi-image post format; a single PDF uses LinkedIn document media. Video rows are accepted for planning/import but publishing returns an actionable unsupported-media error. Existing rows using `imageDriveId` are automatically treated as one image attachment.
 
-Use **Export JSON** or **Export CSV** in the planner for backups and editing. Imports require a JSON array or a CSV with headers; every row must contain `body`, media must be an array (JSON) or JSON text in the CSV `media` column, and imports are limited to 500 rows. Invalid files identify the row and field that needs fixing.
+Click **Export** in the planner, then choose **Export JSON** or **Export CSV**. Both include attachment and publication metadata. Click **Import** to choose a JSON array or a CSV with headers; every row must contain `body`, media must be an array (JSON) or JSON text in the CSV `media` column, and imports are limited to 500 rows. All rows are validated before any saves; invalid files identify the row and field that needs fixing.
+
+If an import stops partway, the message reports how many posts were confirmed. Re-select the same unchanged file **in the same tab** to resume without duplicating confirmed rows. Keep the tab open until recovery is complete; retry bookkeeping does not survive a reload. A supplied `id` updates that existing post; exports omit IDs so ordinary imports create new posts. Importing a `scheduled` status arms the normal scheduler, so use `draft` for a backup that should not publish automatically.
 
 ### Times
 
@@ -216,6 +219,10 @@ Sync re-reads a post at most every 6 hours and only for posts published in the l
 2. Run `npx vercel dev` in this folder and open the address it prints.
 
 The Apps Script and LinkedIn parts still run in Google's cloud, so you need steps 1 to 5 done first.
+
+### Local regression checks
+
+Run `npm run check` for JavaScript syntax checks and `npm test` for dependency-free import/export and backend regression tests. Browser setup, commands, and coverage are in [`tests/README.md`](tests/README.md). This is a static site with serverless functions; there is no compilation/build step or configured lint/typecheck tool.
 
 ---
 
