@@ -18,7 +18,8 @@ const STATS_BATCH = 12;                   // posts per sync call, keeps each cal
 
 /* ---------- routing (called from route_ in Code.gs) ---------- */
 function statsRoute_(action, b) {
-  if (action === 'statsList') return { stats: statsRows_().slice(-3000), sync: { at: P.getProperty('STATS_SYNC_AT') || '', error: P.getProperty('STATS_SYNC_ERR') || '' } };
+  if (action === 'statsList') return { stats: statsRows_().slice(-3000), conn: statsConn_(), sync: { at: P.getProperty('STATS_SYNC_AT') || '', error: P.getProperty('STATS_SYNC_ERR') || '' } };
+  if (action === 'statsAuthUrl') return { url: statsAuthUrl_() };
   if (action === 'statsSave') return withLock_(() => ({ stat: statsSave_(b.stat) }));
   if (action === 'statsSync') return withLock_(() => syncStats_());
   return null;
@@ -68,8 +69,38 @@ function statsSave_(s) {
   return row;
 }
 
+/* ---------- second LinkedIn app, used only to read analytics ---------- */
+// Needs script properties STATS_CLIENT_ID and STATS_CLIENT_SECRET (the "VR Post Analytics" app).
+// Its token is stored separately (STATS_ACCESS_TOKEN), so the posting connection is never touched.
+function statsConn_() {
+  const exp = Number(P.getProperty('STATS_EXPIRES_AT') || 0);
+  const has = !!P.getProperty('STATS_ACCESS_TOKEN');
+  return { configured: !!(P.getProperty('STATS_CLIENT_ID') && P.getProperty('STATS_CLIENT_SECRET')), connected: has && (!exp || exp > Date.now()), expiresAt: exp };
+}
+function statsAuthUrl_() {
+  if (!statsConn_().configured) throw new Error('Add STATS_CLIENT_ID and STATS_CLIENT_SECRET (from the VR Post Analytics app) to the script properties first.');
+  const state = Utilities.getUuid();
+  CacheService.getScriptCache().put('stats_' + state, '1', 600);
+  return 'https://www.linkedin.com/oauth/v2/authorization?response_type=code' +
+    '&client_id=' + P.getProperty('STATS_CLIENT_ID') +
+    '&redirect_uri=' + encodeURIComponent(redirectUri_()) +
+    '&scope=' + encodeURIComponent((P.getProperty('STATS_SCOPES') || 'r_member_postAnalytics').trim()) + '&state=' + state;
+}
+function statsOauthCallback_(q) {
+  CacheService.getScriptCache().remove('stats_' + q.state);
+  const r = UrlFetchApp.fetch('https://www.linkedin.com/oauth/v2/accessToken', {
+    method: 'post', muteHttpExceptions: true,
+    payload: { grant_type: 'authorization_code', code: q.code, redirect_uri: redirectUri_(),
+      client_id: P.getProperty('STATS_CLIENT_ID'), client_secret: P.getProperty('STATS_CLIENT_SECRET') }
+  });
+  let t = {}; try { t = JSON.parse(r.getContentText()); } catch (e) { /* handled below */ }
+  if (!t.access_token) return page_('Could not connect analytics', 'Token exchange failed: ' + r.getContentText().slice(0, 300));
+  P.setProperties({ STATS_ACCESS_TOKEN: t.access_token, STATS_EXPIRES_AT: String(Date.now() + (t.expires_in || 5184000) * 1000), STATS_SYNC_ERR: '' });
+  return page_('Analytics connected', 'LinkedIn analytics is connected. You can close this tab and return to Post Planner.');
+}
+
 /* ---------- LinkedIn Member Post Analytics API ---------- */
-function statsToken_() { return P.getProperty('STATS_ACCESS_TOKEN') || P.getProperty('ACCESS_TOKEN'); }
+function statsToken_() { return P.getProperty('STATS_ACCESS_TOKEN'); }
 function statsEntity_(urn) {
   const m = /^urn:li:(share|ugcPost):(\d+)$/.exec(String(urn || ''));
   return m ? '(' + m[1] + ':' + encodeURIComponent('urn:li:' + m[1] + ':' + m[2]) + ')' : null;
@@ -88,8 +119,8 @@ function readMetrics_(urn) {
   const out = {};
   res.forEach((r, i) => {
     const code = r.getResponseCode();
-    if (code === 401) throw new Error('LinkedIn sign-in expired. Reconnect LinkedIn first.');
-    if (code === 403) throw new Error('LinkedIn has not given this app permission to read post analytics yet (needs the r_member_postAnalytics scope). Until then, enter the numbers by hand.');
+    if (code === 401) throw new Error('The analytics sign-in expired. Click Connect analytics again.');
+    if (code === 403) throw new Error('LinkedIn has not given this app permission to read post analytics yet (the VR Post Analytics app needs the r_member_postAnalytics scope). Until then, enter the numbers by hand.');
     if (code === 429) throw new Error('LinkedIn rate limit reached. Try again later.');
     if (code === 404) { out.missing = true; return; }
     if (code >= 300) throw new Error('LinkedIn said (' + code + '): ' + r.getContentText().slice(0, 200));
@@ -100,7 +131,7 @@ function readMetrics_(urn) {
   return out;
 }
 function syncStats_() {
-  if (!tokenInfo_().connected) throw new Error('LinkedIn sign-in expired. Reconnect LinkedIn first.');
+  if (!statsConn_().connected) throw new Error('Analytics is not connected (or its sign-in expired). Click Connect analytics in the Insights tab.');
   const now = Date.now(), cutoff = now - STATS_WINDOW_DAYS * 864e5;
   const lastApi = {};
   statsRows_().forEach(s => { if (s.source === 'api') { const d = toDate_(s.capturedAt); if (d) lastApi[s.postId] = Math.max(lastApi[s.postId] || 0, d.getTime()); } });
