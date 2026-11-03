@@ -171,6 +171,7 @@ function authUrl_() {
     '&scope=' + encodeURIComponent('openid profile w_member_social' + (P.getProperty('EXTRA_SCOPES') ? ' ' + P.getProperty('EXTRA_SCOPES').trim() : '')) + '&state=' + state;
 }
 function oauthCallback_(q) {
+  if (CacheService.getScriptCache().get('stats_' + q.state)) return statsOauthCallback_(q); // Insights.gs: second LinkedIn app
   if (!CacheService.getScriptCache().get('state_' + q.state)) return page_('Link expired', 'Go back to Post Planner and click Connect LinkedIn again.');
   const r = UrlFetchApp.fetch('https://www.linkedin.com/oauth/v2/accessToken', {
     method: 'post', muteHttpExceptions: true,
