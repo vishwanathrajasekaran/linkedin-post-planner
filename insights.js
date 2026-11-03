@@ -3,7 +3,7 @@
    so app.js itself does not need to change. */
 'use strict';
 
-const ins = { rows: [], sync: { at: '', error: '' }, loaded: false, err: '', range: '30', sort: { k: 'pub', dir: -1 } };
+const ins = { rows: [], conn: { configured: false, connected: false, expiresAt: 0 }, sync: { at: '', error: '' }, loaded: false, err: '', range: '30', sort: { k: 'pub', dir: -1 } };
 const INS_METRICS = [
   { k: 'impressions', label: 'Impressions' },
   { k: 'reactions', label: 'Reactions' },
@@ -62,7 +62,7 @@ async function loadInsights() {
   try {
     const first = !ins.loaded;
     const d = await (first ? busy('Loading insights...', () => api('statsList')) : api('statsList'));
-    ins.rows = d.stats || []; ins.sync = d.sync || ins.sync; ins.loaded = true; ins.err = '';
+    ins.rows = d.stats || []; ins.conn = d.conn || ins.conn; ins.sync = d.sync || ins.sync; ins.loaded = true; ins.err = '';
   } catch (e) {
     ins.err = /unknown action/i.test(e.message)
       ? 'The Insights part of the backend is not installed yet. Add Insights.gs to your Apps Script project, paste the updated Code.gs and deploy a new version.'
@@ -83,7 +83,11 @@ function renderInsights() {
   const sum = k => withStats.reduce((a, x) => a + (x.s[k] || 0), 0);
   const totImp = sum('impressions');
   const totEng = sum('reactions') + sum('comments') + sum('reshares');
-  const hasApi = ins.rows.some(r => r.source === 'api');
+  const cn = ins.conn, days = cn.connected && cn.expiresAt ? Math.max(0, Math.ceil((cn.expiresAt - Date.now()) / 864e5)) : 0;
+  const connectUi = cn.connected
+    ? `<button type="button" class="pill ${cn.expiresAt && days <= 7 ? 'warn' : 'ok'}" data-act="ins-connect" title="Click to reconnect analytics"><i class="dot"></i><span>Analytics${cn.expiresAt ? ', ' + days + ' days left' : ' connected'}</span></button>
+       <button class="btn primary" type="button" data-act="ins-sync">Sync from LinkedIn</button>`
+    : '<button class="btn primary" type="button" data-act="ins-connect">Connect analytics</button>';
   const tiles = [
     ['Impressions', fmtN(totImp)], ['Reactions', fmtN(sum('reactions'))], ['Comments', fmtN(sum('comments'))],
     ['Reposts', fmtN(sum('reshares'))], ['Engagement rate', totImp ? fmtPct(totEng / totImp) : '—'],
@@ -96,10 +100,10 @@ function renderInsights() {
         <p class="hint" style="margin:2px 0 0">${data.length} published post${data.length === 1 ? '' : 's'} in this range, ${withStats.length} with numbers.${ins.sync.at ? ` Last sync try: ${esc(ago(ins.sync.at))}.` : ''}</p></div>
       <span class="spacer"></span>
       <div class="seg" role="group" aria-label="Range">${rangeBtn('7', '7 days')}${rangeBtn('30', '30 days')}${rangeBtn('90', '90 days')}${rangeBtn('all', 'All')}</div>
-      <button class="btn primary" type="button" data-act="ins-sync">Sync from LinkedIn</button>
+      ${connectUi}
     </div>
     ${ins.sync.error ? `<div class="banner bad glass"><span>${esc(ins.sync.error)}</span></div>` : ''}
-    ${!hasApi && !ins.sync.error ? '<p class="hint">Automatic sync needs LinkedIn to approve analytics access for your app. Until then, use Update on a post to type in the numbers from LinkedIn.</p>' : ''}
+    ${!cn.connected ? '<p class="hint">Click Connect analytics to let this app read your post numbers from LinkedIn. Until then, use Update on a post to type them in.</p>' : ''}
     <div class="tiles">${tiles}</div>
     <section class="glass card"><h3 class="ins-h">Impressions per post</h3>${chartHtml(withStats)}</section>
     <section class="glass card"><h3 class="ins-h">Posts</h3>${tableHtml(data)}</section>
@@ -154,7 +158,7 @@ function tableHtml(data) {
 
 /* ---------- actions ---------- */
 async function insSync() {
-  if (!state.token.connected) { toast('LinkedIn is not connected. Reconnect first.', { type: 'err' }); return; }
+  if (!ins.conn.connected) { toast('Analytics is not connected. Click Connect analytics first.', { type: 'err' }); return; }
   let synced = 0;
   try {
     await busy('Syncing from LinkedIn...', async () => {
@@ -168,6 +172,34 @@ async function insSync() {
     toast(synced ? `Updated ${synced} post${synced === 1 ? '' : 's'} from LinkedIn.` : 'Already up to date. Posts are re-read at most every 6 hours.', { type: synced ? 'ok' : 'info' });
   } catch (e) { toast(e.message, { type: 'err', ms: 10000 }); }
   await loadInsights();
+}
+
+async function insConnect() {
+  if (ins.conn.connected) {
+    const ok = await confirmDialog({ title: 'Reconnect analytics?', message: 'A new tab opens so you can sign in to LinkedIn again for analytics. This app stays open here.', ok: 'Open LinkedIn' });
+    if (!ok) return;
+  }
+  const w = window.open('about:blank', '_blank');
+  if (!w) { toast('Your browser blocked the new tab. Allow pop-ups for this site and try again.', { type: 'err' }); return; }
+  try { w.document.title = 'Connecting analytics'; w.document.body.textContent = 'Opening LinkedIn...'; } catch (e) { /* ignore */ }
+  const prev = ins.conn.expiresAt || 0;
+  try {
+    const { url } = await busy('Contacting LinkedIn...', () => api('statsAuthUrl'));
+    w.location.href = url;
+  } catch (e) { try { w.close(); } catch (x) { /* ignore */ } toast(e.message, { type: 'err', ms: 10000 }); return; }
+  const started = Date.now();
+  const timer = setInterval(async () => {
+    if (Date.now() - started > 180000) { clearInterval(timer); return; }
+    try {
+      const d = await api('statsList');
+      if (d.conn && d.conn.connected && (d.conn.expiresAt || 1) > prev) {
+        clearInterval(timer);
+        ins.rows = d.stats || ins.rows; ins.conn = d.conn; ins.sync = d.sync || ins.sync;
+        if (state.view === 'insights') renderInsights();
+        toast('Analytics connected. You can sync now.');
+      }
+    } catch (e) { /* keep waiting */ }
+  }, 3000);
 }
 
 function insEdit(id) {
@@ -205,6 +237,7 @@ document.addEventListener('click', e => {
   const t = e.target.closest('[data-act^="ins-"]'); if (!t) return;
   switch (t.dataset.act) {
     case 'ins-sync': insSync(); break;
+    case 'ins-connect': insConnect(); break;
     case 'ins-reload': ins.err = ''; ins.loaded = false; loadInsights(); break;
     case 'ins-range': ins.range = t.dataset.r; renderInsights(); break;
     case 'ins-sort': ins.sort = { k: t.dataset.k, dir: ins.sort.k === t.dataset.k ? -ins.sort.dir : -1 }; renderInsights(); break;
